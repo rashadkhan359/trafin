@@ -27,6 +27,12 @@ function initializeProject() {
   return Main.initializeProject();
 }
 
+function syncSettingsAndDropdowns() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  SettingsSync.refreshAll(ss);
+  Main.alert("Dropdowns and balance formulas synced to current settings.");
+}
+
 function refreshAccountBalances() {
   return Main.refreshAccountBalances();
 }

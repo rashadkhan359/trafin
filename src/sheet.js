@@ -37,18 +37,48 @@ const Sheet = {
         sheet.getRange(startRow, col, numRows, 1).setDataValidation(rule);
     },
 
+    applyAccountDropdown(ss, sheet, startRow, col, numRows) {
+        const accounts = Config.getAccountsList(ss);
+        if (accounts.length === 0) return;
+        const rule = SpreadsheetApp.newDataValidation()
+            .requireValueInList(accounts.map(a => a.displayName), true)
+            .setAllowInvalid(true)
+            .build();
+        sheet.getRange(startRow, col, numRows, 1).setDataValidation(rule);
+    },
+
     applyTransactionDropdowns(ss, sheet, startRow, numRows) {
         if (numRows <= 0) return;
-        // Category — col 5
+        // Category — col 5 (Settings_Categories)
         Sheet.applyCategoryDropdown(ss, sheet, startRow, 5, numRows);
-        // Bank — col 7
-        const accounts = Config.getAccountsList(ss);
-        if (accounts.length > 0) {
-            const rule = SpreadsheetApp.newDataValidation()
-                .requireValueInList(accounts.map(a => a.displayName), true)
-                .setAllowInvalid(true)
-                .build();
-            sheet.getRange(startRow, 7, numRows, 1).setDataValidation(rule);
+        // Bank — col 7 (Accounts + Accounts_CC display names)
+        Sheet.applyAccountDropdown(ss, sheet, startRow, 7, numRows);
+    },
+
+    /** Rows to cover for settings sheets (used rows + buffer for new entries) */
+    settingsDropdownRowCount(sheet) {
+        const used = Math.max(sheet.getLastRow() - 1, 1);
+        return Math.max(used + 50, 100);
+    },
+
+    /************************************************************
+     * ENSURE DROPDOWNS on transaction data rows
+     * appendRow() does not inherit validation — apply per new row,
+     * or full range when sheet never had rules (legacy sheets).
+     ************************************************************/
+    ensureTransactionDropdowns(ss, sheet) {
+        const lastRow = sheet.getLastRow();
+        if (lastRow < 6) return;
+
+        const headerRowHasCategoryRule = !!sheet.getRange(6, 5).getDataValidation();
+        if (!headerRowHasCategoryRule) {
+            Sheet.applyTransactionDropdowns(ss, sheet, 6, lastRow - 5);
+            return;
+        }
+
+        const lastRowHasRules = !!sheet.getRange(lastRow, 5).getDataValidation();
+        if (!lastRowHasRules) {
+            Sheet.applyTransactionDropdowns(ss, sheet, lastRow, 1);
         }
     },
 
@@ -68,10 +98,26 @@ const Sheet = {
         const recurring = ss.getSheetByName("Settings_Recurring");
         const budget = ss.getSheetByName("Budget");
 
-        if (mapping) Sheet.applyCategoryDropdown(ss, mapping, 2, 2, 500);
-        if (rules) Sheet.applyCategoryDropdown(ss, rules, 2, 6, 500);
-        if (recurring) Sheet.applyCategoryDropdown(ss, recurring, 2, 6, 100);
-        if (budget) Sheet.applyCategoryDropdown(ss, budget, 2, 1, 50);
+        if (mapping && mapping.getLastRow() > 1) {
+            Sheet.applyCategoryDropdown(
+                ss, mapping, 2, 2, Sheet.settingsDropdownRowCount(mapping)
+            );
+        }
+        if (rules && rules.getLastRow() > 1) {
+            Sheet.applyCategoryDropdown(
+                ss, rules, 2, 6, Sheet.settingsDropdownRowCount(rules)
+            );
+        }
+        if (recurring && recurring.getLastRow() > 1) {
+            const rows = Sheet.settingsDropdownRowCount(recurring);
+            Sheet.applyCategoryDropdown(ss, recurring, 2, 6, rows);
+            Sheet.applyAccountDropdown(ss, recurring, 2, 5, rows);
+        }
+        if (budget && budget.getLastRow() > 1) {
+            Sheet.applyCategoryDropdown(
+                ss, budget, 2, 1, Sheet.settingsDropdownRowCount(budget)
+            );
+        }
 
         Sheet.applyAccountDropdownToAllTxSheets(ss);
     },
@@ -251,7 +297,9 @@ const Sheet = {
             sheet.appendRow(["Netflix", 649, 15, "netflix", "Kotak Savings", "OTT Subscriptions", "Unpaid", ""]);
             sheet.appendRow(["Electricity", 2000, 20, "tata power", "BOI Savings", "Electricity", "Unpaid", ""]);
         }
-        Sheet.applyCategoryDropdown(ss, sheet, 2, 6, 100);
+        const rows = Sheet.settingsDropdownRowCount(sheet);
+        Sheet.applyCategoryDropdown(ss, sheet, 2, 6, rows);
+        Sheet.applyAccountDropdown(ss, sheet, 2, 5, rows);
         sheet.setColumnWidths(1, 8, 160);
     },
 

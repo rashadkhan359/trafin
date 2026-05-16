@@ -1,5 +1,5 @@
 /************************************************************
- * FINTRACK v3
+ * TraFin v1
  ************************************************************
  * DATA GUARD PROMISE: This script NEVER deletes sheets, NEVER removes data rows,
  * NEVER overwrites user-entered values except in formula-driven columns
@@ -24,11 +24,10 @@ const Main = {
         Sheet.setupDashboardSheet(ss);
 
         Backup.migrateExistingTransactions(ss);
-        Main.refreshAccountBalances();
-        Main.refreshCCBalances();
+        SettingsSync.refreshAll(ss);
 
         Main.alert(
-            "✅ FinTrack v3 Initialized!\n\n" +
+            "TraFin v1 Initialized!\n\n" +
             "All sheets verified. Existing data preserved.\n\n" +
             "Next steps:\n" +
             "1. Set your timezone in Settings sheet (Section=SYSTEM, Key=Timezone)\n" +
@@ -148,26 +147,21 @@ const Main = {
     },
 
     onEdit(e) {
+        if (!e || !e.range) return;
+
         const sheet = e.range.getSheet();
-        const name  = sheet.getName();
         const ss    = SpreadsheetApp.getActiveSpreadsheet();
 
-        if (name === "Settings_Categories") {
-            Sheet.reapplyAllDropdowns(ss);
-        }
-        if (name === "Accounts" || name === "Accounts_CC") {
-            Sheet.reapplyAllDropdowns(ss);
-            Main.refreshAccountBalances();
-            Main.refreshCCBalances();
-        }
+        SettingsSync.onSettingsChanged(ss, sheet.getName());
     },
 
     onOpen() {
         try {
             SpreadsheetApp.getUi()
-                .createMenu("📊 FinTrack")
+                .createMenu("TraFin")
                 .addItem("Update Dashboard",             "updateGlobalDashboard")
                 .addItem("Format Current Sheet",         "applyFormatting")
+                .addItem("Sync Dropdowns & Balances",    "syncSettingsAndDropdowns")
                 .addItem("Refresh Account Balances",     "refreshAccountBalances")
                 .addItem("Refresh CC Balances",          "refreshCCBalances")
                 .addItem("Reset Recurring (New Month)",  "resetRecurringStatus")

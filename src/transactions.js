@@ -52,8 +52,9 @@ const Transactions = {
     /************************************************************
      * APPEND — write one transaction row to sheet
      ************************************************************/
-    append(sheet, row) {
+    append(ss, sheet, row) {
         sheet.appendRow(row);
+        Sheet.ensureTransactionDropdowns(ss, sheet);
     },
 
     /************************************************************
@@ -71,7 +72,7 @@ const Transactions = {
             rawSms
         });
 
-        Transactions.append(sheet, row);
+        Transactions.append(ss, sheet, row);
 
         if (isNewSheet) {
             Main.refreshAccountBalances();
