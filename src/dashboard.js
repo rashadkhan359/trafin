@@ -9,7 +9,7 @@ const Dashboard = {
      ************************************************************/
     updateGlobalDashboard() {
         const ss = SpreadsheetApp.getActiveSpreadsheet();
-        const tz = getTimezone(ss);
+        const tz = Config.getTimezone(ss);
         const dash = ss.getSheetByName("Dashboard");
         const now = new Date();
         const curMonth = Utilities.formatDate(now, tz, "MMM_yyyy");
@@ -51,7 +51,7 @@ const Dashboard = {
 
         const budgetSheet = ss.getSheetByName("Budget");
         if (budgetSheet && curSheet) {
-            this.updateBudgetSpent(ss, curSheet, budgetSheet);
+            Dashboard.updateBudgetSpent(ss, curSheet, budgetSheet);
             const budgetData = budgetSheet
                 .getRange(2, 1, budgetSheet.getLastRow() - 1, 4).getValues();
             budgetData.forEach(([cat, budget, spent, pct]) => {
@@ -158,7 +158,7 @@ const Dashboard = {
         dash.setColumnWidth(3, 130);
         dash.setColumnWidth(4, 100);
 
-        _alert("✅ Dashboard updated!");
+        Main.alert("✅ Dashboard updated!");
     },
 
     updateBudgetSpent(ss, curSheet, budgetSheet) {

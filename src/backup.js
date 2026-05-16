@@ -3,7 +3,7 @@
  ************************************************************/
 const Backup = {
     backupAllTransactions(ss) {
-        const tz = getTimezone(ss);
+        const tz = Config.getTimezone(ss);
 
         const timestamp = Utilities.formatDate(
             new Date(),
@@ -22,11 +22,11 @@ const Backup = {
 
         backupSheet.appendRow([
             "Source Sheet",
-            ...TRANSACTION_COLS,
+            ...TxSchema.HEADERS,
             "Backup Timestamp"
         ]);
 
-        backupSheet.getRange(1, 1, 1, TRANSACTION_COLS.length + 2)
+        backupSheet.getRange(1, 1, 1, TxSchema.HEADERS.length + 2)
             .setFontWeight("bold")
             .setBackground("#f4cccc");
 
@@ -50,23 +50,8 @@ const Backup = {
                     .getValues();
 
                 data.forEach(row => {
-
-                    const obj = {};
-
-                    headers.forEach((h, i) => {
-                        obj[h] = row[i];
-                    });
-
-                    const normalized = [
-                        obj["Timestamp"] || "",
-                        obj["Type"] || "",
-                        obj["Amount"] || "",
-                        obj["Entity"] || "",
-                        obj["Category"] || "",
-                        obj["Labels"] || "",
-                        obj["Bank"] || "",
-                        obj["Raw SMS"] || ""
-                    ];
+                    const obj = TxSchema.objectFromRow(row, headers);
+                    const normalized = TxSchema.rowFromObject(obj);
 
                     backupSheet.appendRow([
                         sheet.getName(),
@@ -90,7 +75,7 @@ const Backup = {
         const sheets = ss.getSheets().filter(s => s.getName().startsWith("Transactions_"));
         if (sheets.length === 0) return;
 
-        const backupName = backupAllTransactions(ss);
+        const backupName = Backup.backupAllTransactions(ss);
         Logger.log(`Migration: Backup created → ${backupName}`);
 
         sheets.forEach(sheet => {
@@ -107,8 +92,8 @@ const Backup = {
             sheet.setFrozenRows(5);
 
             if (lastRow < 5) {
-                sheet.getRange(5, 1, 1, TRANSACTION_COLS.length)
-                    .setValues([TRANSACTION_COLS]).setFontWeight("bold").setBackground("#eeeeee");
+                sheet.getRange(5, 1, 1, TxSchema.HEADERS.length)
+                    .setValues([TxSchema.HEADERS]).setFontWeight("bold").setBackground("#eeeeee");
                 return;
             }
 
@@ -131,24 +116,11 @@ const Backup = {
                 .getRange(6, 1, lastRow - 5, lastCol)
                 .getValues();
 
-            // Convert rows safely
+            // Convert rows safely via header map
             const migrated = data.map(row => {
-                const obj = {};
-
-                oldHeaders.forEach((header, i) => {
-                    obj[header] = row[i];
-                });
-
-                return [
-                    obj["Timestamp"] || "",
-                    obj["Type"] || "",
-                    obj["Amount"] || "",
-                    obj["Entity"] || "",
-                    obj["Category"] || "",
-                    "", // Labels intentionally empty
-                    obj["Bank"] || "",
-                    obj["Raw SMS"] || ""
-                ];
+                const obj = TxSchema.objectFromRow(row, oldHeaders);
+                obj["Labels"] = "";
+                return TxSchema.rowFromObject(obj);
             });
 
             // Clear old structure only for transaction area
@@ -157,26 +129,29 @@ const Backup = {
             }
 
             // Ensure enough columns
-            if (sheet.getMaxColumns() < 8) {
-                sheet.insertColumnsAfter(sheet.getMaxColumns(), 8 - sheet.getMaxColumns());
+            if (sheet.getMaxColumns() < TxSchema.HEADERS.length) {
+                sheet.insertColumnsAfter(
+                    sheet.getMaxColumns(),
+                    TxSchema.HEADERS.length - sheet.getMaxColumns()
+                );
             }
 
             // Rewrite headers
-            sheet.getRange(5, 1, 1, TRANSACTION_COLS.length)
-                .setValues([TRANSACTION_COLS])
+            sheet.getRange(5, 1, 1, TxSchema.HEADERS.length)
+                .setValues([TxSchema.HEADERS])
                 .setFontWeight("bold")
                 .setBackground("#eeeeee");
 
             // Rewrite migrated data
             if (migrated.length > 0) {
-                sheet.getRange(6, 1, migrated.length, TRANSACTION_COLS.length)
+                sheet.getRange(6, 1, migrated.length, TxSchema.HEADERS.length)
                     .setValues(migrated);
             }
 
             // Apply dropdowns
-            applyTransactionDropdowns(ss, sheet, 6, migrated.length);
+            Sheet.applyTransactionDropdowns(ss, sheet, 6, migrated.length);
 
             Logger.log(`Migration complete: ${sheet.getName()}`);
         });
     },
-}
+};

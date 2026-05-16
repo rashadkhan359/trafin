@@ -15,10 +15,10 @@ const Sheet = {
             ["Net Balance", `=B3-B2`]
         ]);
 
-        sheet.getRange(5, 1, 1, TRANSACTION_COLS.length)
-            .setValues([TRANSACTION_COLS]).setFontWeight("bold").setBackground("#eeeeee");
+        sheet.getRange(5, 1, 1, TxSchema.HEADERS.length)
+            .setValues([TxSchema.HEADERS]).setFontWeight("bold").setBackground("#eeeeee");
         sheet.setFrozenRows(5);
-        _applyTransactionDropdowns(ss, sheet, 6, 1000);
+        Sheet.applyTransactionDropdowns(ss, sheet, 6, 1000);
         return sheet;
     },
 
@@ -40,9 +40,9 @@ const Sheet = {
     applyTransactionDropdowns(ss, sheet, startRow, numRows) {
         if (numRows <= 0) return;
         // Category — col 5
-        applyCategoryDropdown(ss, sheet, startRow, 5, numRows);
+        Sheet.applyCategoryDropdown(ss, sheet, startRow, 5, numRows);
         // Bank — col 7
-        const accounts = getAccountsList(ss);
+        const accounts = Config.getAccountsList(ss);
         if (accounts.length > 0) {
             const rule = SpreadsheetApp.newDataValidation()
                 .requireValueInList(accounts.map(a => a.displayName), true)
@@ -58,7 +58,7 @@ const Sheet = {
             .forEach(sheet => {
                 const lastRow = sheet.getLastRow();
                 if (lastRow < 6) return;
-                applyTransactionDropdowns(ss, sheet, 6, lastRow - 5);
+                Sheet.applyTransactionDropdowns(ss, sheet, 6, lastRow - 5);
             });
     },
 
@@ -68,18 +68,18 @@ const Sheet = {
         const recurring = ss.getSheetByName("Settings_Recurring");
         const budget = ss.getSheetByName("Budget");
 
-        if (mapping) applyCategoryDropdown(ss, mapping, 2, 2, 500);
-        if (rules) applyCategoryDropdown(ss, rules, 2, 6, 500);
-        if (recurring) applyCategoryDropdown(ss, recurring, 2, 6, 100);
-        if (budget) applyCategoryDropdown(ss, budget, 2, 1, 50);
+        if (mapping) Sheet.applyCategoryDropdown(ss, mapping, 2, 2, 500);
+        if (rules) Sheet.applyCategoryDropdown(ss, rules, 2, 6, 500);
+        if (recurring) Sheet.applyCategoryDropdown(ss, recurring, 2, 6, 100);
+        if (budget) Sheet.applyCategoryDropdown(ss, budget, 2, 1, 50);
 
-        applyAccountDropdownToAllTxSheets(ss);
+        Sheet.applyAccountDropdownToAllTxSheets(ss);
     },
 
     /************************************************************
     * FORMATTING
     ************************************************************/
-    applyFormatting(sheet) {
+    applyFormatting() {
         const sheet = SpreadsheetApp.getActiveSheet();
         if (!sheet.getName().startsWith("Transactions_")) return;
         const lastRow = sheet.getLastRow();
@@ -221,7 +221,7 @@ const Sheet = {
             ];
             sheet.getRange(2, 1, starters.length, 4).setValues(starters);
         }
-        applyCategoryDropdown(ss, sheet, 2, 2, 500);
+        Sheet.applyCategoryDropdown(ss, sheet, 2, 2, 500);
         sheet.setColumnWidths(1, 4, 180);
     },
 
@@ -235,7 +235,7 @@ const Sheet = {
             sheet.appendRow(["Morning Commute", "08:00", "10:30", 150, "Mon,Tue,Wed,Thu,Fri", "Travel"]);
             sheet.appendRow(["Evening Commute", "17:00", "20:00", 150, "Mon,Tue,Wed,Thu,Fri", "Travel"]);
         }
-        applyCategoryDropdown(ss, sheet, 2, 6, 500);
+        Sheet.applyCategoryDropdown(ss, sheet, 2, 6, 500);
         sheet.setColumnWidths(1, 6, 160);
     },
 
@@ -251,7 +251,7 @@ const Sheet = {
             sheet.appendRow(["Netflix", 649, 15, "netflix", "Kotak Savings", "OTT Subscriptions", "Unpaid", ""]);
             sheet.appendRow(["Electricity", 2000, 20, "tata power", "BOI Savings", "Electricity", "Unpaid", ""]);
         }
-        applyCategoryDropdown(ss, sheet, 2, 6, 100);
+        Sheet.applyCategoryDropdown(ss, sheet, 2, 6, 100);
         sheet.setColumnWidths(1, 8, 160);
     },
 
@@ -315,7 +315,7 @@ const Sheet = {
                 sheet.getRange(i + 2, 2).setValue(amt);
             });
         }
-        applyCategoryDropdown(ss, sheet, 2, 1, 50);
+        Sheet.applyCategoryDropdown(ss, sheet, 2, 1, 50);
         sheet.setColumnWidths(1, 5, 180);
     },
 

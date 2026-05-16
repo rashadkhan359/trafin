@@ -18,9 +18,9 @@ const Parser = {
       return null;
     }
 
-    const sms = normalizeSms(rawSms);
+    const sms = Parser.normalizeSms(rawSms);
 
-    if (shouldIgnoreSms(sms)) {
+    if (Parser.shouldIgnoreSms(sms)) {
 
       return {
         ignored: true,
@@ -28,19 +28,32 @@ const Parser = {
       };
     }
 
-    const type = detectTxnType(sms);
+    let amount = Parser.extractAmount(sms);
+    if (!amount) {
+      amount = Parser.extractAmountLegacy(rawSms);
+    }
 
-    const amount = extractAmount(sms);
+    const bank = Parser.detectBank(sender, sms, rawSms);
 
-    const entity = extractEntity(sms);
+    const legacyTxn = Parser.matchLegacyTxn(rawSms, sms);
+    let type;
+    let entity;
 
-    const bank = detectBank(sender, sms);
+    if (legacyTxn) {
+      type = legacyTxn.type;
+      entity = legacyTxn.entity;
+    } else {
+      type = Parser.detectTxnType(sms);
+      entity = Parser.extractEntity(sms, rawSms);
+    }
 
-    const account = extractAccount(sms);
+    entity = Parser.cleanEntity(entity);
 
-    const refNo = extractReference(sms);
+    const account = Parser.extractAccount(sms);
 
-    const confidence = calculateConfidence({
+    const refNo = Parser.extractReference(sms);
+
+    const confidence = Parser.calculateConfidence({
       type,
       amount,
       entity,
@@ -72,12 +85,87 @@ const Parser = {
 
       confidence,
 
-      category: autoCategorize(entity, type),
+      category: Parser.autoCategorize(entity, type),
 
       labels: [],
 
       parsedAt: new Date()
     };
+  },
+
+  /************************************************************
+   * LEGACY ORDERED TXN PATTERNS (parity with monolithic Code.js)
+   * Most specific first; returns null to fall through to generic heuristics.
+   ************************************************************/
+  matchLegacyTxn(rawSms, normalizedSms) {
+    const lower = normalizedSms.toLowerCase();
+
+    // CC spend: "INR X spent on Kotak Credit Card xNNNN at MERCHANT."
+    if (/\bspent on\b.*credit card/i.test(rawSms) ||
+        /\bspent on\b.*credit card/i.test(normalizedSms)) {
+      const m = rawSms.match(/\bat\s+(.+?)\./i) ||
+        normalizedSms.match(/\bat\s+(.+?)\./i);
+      return {
+        type: "Debit",
+        entity: m ? m[1].trim() : "CC Spend"
+      };
+    }
+
+    // CC bill payment: "Payment of INR X is credited to your ... Credit Card"
+    if (/credited to your.*credit card/i.test(lower) ||
+        /credited to your.*credit card/i.test(rawSms.toLowerCase())) {
+      return {
+        type: "CC_Payment",
+        entity: "CC Bill Payment"
+      };
+    }
+
+    // Standard UPI / account debit
+    if (lower.includes("debited") || rawSms.toLowerCase().includes("debited")) {
+      const m = rawSms.match(/credited to\s+(.+?)\s+via/i) ||
+        rawSms.match(/to\s+(.+?)\s+UPI/i) ||
+        normalizedSms.match(/credited to\s+(.+?)\s+via/i) ||
+        normalizedSms.match(/to\s+(.+?)\s+UPI/i) ||
+        normalizedSms.match(/paid to\s+(.+?)\s+on/i);
+      return {
+        type: "Debit",
+        entity: m ? m[1].trim() : "Unknown"
+      };
+    }
+
+    // Standard credit / received (after CC payment branch)
+    if (lower.includes("credited") || lower.includes("received") ||
+        rawSms.toLowerCase().includes("credited") ||
+        rawSms.toLowerCase().includes("received")) {
+      const m = rawSms.match(/from\s+(.+?)\s+on/i) ||
+        rawSms.match(/from\s+(.+?)\s+credited/i) ||
+        normalizedSms.match(/from\s+(.+?)\s+on/i) ||
+        normalizedSms.match(/from\s+(.+?)\s+credited/i);
+      return {
+        type: "Credit",
+        entity: m ? m[1].trim() : "Income"
+      };
+    }
+
+    return null;
+  },
+
+  /************************************************************
+   * LEGACY AMOUNT (pre-normalization Rs/INR variants)
+   ************************************************************/
+  extractAmountLegacy(rawSms) {
+    const amountMatch = rawSms.match(/(?:Rs\.?|INR|Rs:|₹)\s*([\d,]+\.?\d*)/i);
+    if (!amountMatch) return null;
+    const amount = parseFloat(amountMatch[1].replace(/,/g, ""));
+    return (!isNaN(amount) && amount > 0) ? amount : null;
+  },
+
+  /************************************************************
+   * CARD LAST-4 (Kotak CC parserId mapping)
+   ************************************************************/
+  extractLast4(rawSms) {
+    const m = rawSms.match(/[xX]{1,4}(\d{4})/i);
+    return m ? m[1] : "XXXX";
   },
 
   /************************************************************
@@ -231,39 +319,32 @@ const Parser = {
   /************************************************************
    * EXTRACT ENTITY / MERCHANT
    ************************************************************/
-  extractEntity(sms) {
+  extractEntity(normalizedSms, rawSms) {
+    const sources = [normalizedSms, rawSms || ""];
 
     const patterns = [
-
       /credited to\s+(.+?)\s+via/i,
-
       /paid to\s+(.+?)\s+on/i,
-
       /to\s+(.+?)\s+on/i,
-
       /to\s+(.+?)\s+Ref/i,
-
+      /to\s+(.+?)\s+UPI/i,
       /UPI\/(.+?)\//i,
-
       /VPA\s+(.+?)\s/i,
-
       /Info:\s*UPI\s*(.+?)\s/i,
-
       /trf to\s+(.+?)\s/i,
-
-      /merchant[: ]+(.+?)\s/i
+      /merchant[: ]+(.+?)\s/i,
+      /from\s+(.+?)\s+on/i,
+      /from\s+(.+?)\s+credited/i
     ];
 
-    for (const pattern of patterns) {
-
-      const match = sms.match(pattern);
-
-      if (match) {
-
-        const cleaned = cleanEntity(match[1]);
-
-        if (cleaned.length > 1) {
-          return cleaned;
+    for (const text of sources) {
+      for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match) {
+          const cleaned = Parser.cleanEntity(match[1]);
+          if (cleaned.length > 1 && cleaned !== "Unknown") {
+            return cleaned;
+          }
         }
       }
     }
@@ -275,31 +356,42 @@ const Parser = {
    * CLEAN ENTITY
    ************************************************************/
   cleanEntity(entity) {
+    if (!entity) return "Unknown";
 
     return entity
-
+      .toString()
+      .split("@")[0]
+      .replace(/[0-9]{7,}/g, "")
       .replace(/[^\w\s]/g, " ")
-
       .replace(/\s+/g, " ")
-
       .replace(/\bvia\b/gi, "")
-
       .replace(/\bupi\b/gi, "")
-
       .replace(/\bon\b/gi, "")
-
-      .trim();
+      .trim() || "Unknown";
   },
 
   /************************************************************
    * DETECT BANK
    ************************************************************/
-  detectBank(sender, sms) {
+  detectBank(sender, sms, rawSms) {
+    // Legacy SMS patterns first — Kotak_CC_{last4} must win over sender "Kotak"
+    const legacyBank = Parser.detectBankLegacySms(rawSms || "");
+    if (legacyBank !== "Unknown") {
+      return legacyBank;
+    }
 
+    const fromSender = Parser.detectBankFromSender(sender);
+    if (fromSender !== "Unknown") {
+      return fromSender;
+    }
+
+    return Parser.detectBankFromSmsText(sms);
+  },
+
+  detectBankFromSender(sender) {
     sender = (sender || "").toUpperCase();
 
     const mappings = {
-
       "HDFCBK": "HDFC",
       "ICICIB": "ICICI",
       "SBIBNK": "SBI",
@@ -315,23 +407,45 @@ const Parser = {
     };
 
     for (const key in mappings) {
-
       if (sender.includes(key)) {
         return mappings[key];
       }
     }
 
+    return "Unknown";
+  },
+
+  /************************************************************
+   * LEGACY SMS BANK DETECTION (raw SMS — BOI, Kotak CC last-4)
+   ************************************************************/
+  detectBankLegacySms(rawSms) {
+    if (rawSms.includes("-BOI") || /\bBOI\b/.test(rawSms)) {
+      return "BOI";
+    }
+    if (/kotak.*credit card|credit card.*kotak/i.test(rawSms)) {
+      return "Kotak_CC_" + Parser.extractLast4(rawSms);
+    }
+    if (/\bKotak\b/i.test(rawSms)) {
+      return "Kotak";
+    }
+    return "Unknown";
+  },
+
+  detectBankFromSmsText(sms) {
     const lower = sms.toLowerCase();
 
     if (lower.includes("hdfc")) return "HDFC";
-
     if (lower.includes("icici")) return "ICICI";
-
     if (lower.includes("sbi")) return "SBI";
-
     if (lower.includes("kotak")) return "Kotak";
-
     if (lower.includes("axis")) return "Axis";
+    if (lower.includes("boi") || lower.includes("bank of india")) return "BOI";
+    if (lower.includes("idfc")) return "IDFC";
+    if (lower.includes("yes bank")) return "Yes Bank";
+    if (lower.includes("pnb") || lower.includes("punjab national")) return "PNB";
+    if (lower.includes("canara")) return "Canara";
+    if (lower.includes("union bank")) return "Union Bank";
+    if (lower.includes("paytm")) return "Paytm";
 
     return "Unknown";
   },
@@ -401,6 +515,10 @@ const Parser = {
 
     if (data.type !== "Unknown") {
       score += 0.2;
+    }
+
+    if (data.type === "CC_Payment") {
+      score += 0.1;
     }
 
     if (data.amount !== null) {

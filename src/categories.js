@@ -13,7 +13,7 @@ const Categories = {
             const keywords = keywordCell.toString().split(",").map(k => k.trim().toLowerCase());
             const entityLower = entity.toLowerCase();
             if (!keywords.some(kw => kw && entityLower.includes(kw))) continue;
-            if (days && !this.matchesDay(days, dayStr)) continue;
+            if (days && !Categories.matchesDay(days, dayStr)) continue;
             return category;
         }
 
@@ -24,7 +24,7 @@ const Categories = {
             if (!start) continue;
             if (timeStr < start || timeStr > end) continue;
             if (amount > Number(maxAmt)) continue;
-            if (days && !this.matchesDay(days, dayStr)) continue;
+            if (days && !Categories.matchesDay(days, dayStr)) continue;
             return cat;
         }
 

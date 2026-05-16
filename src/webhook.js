@@ -1,108 +1,105 @@
 /************************************************************
  * WEBHOOK
- * Handles incoming SMS data from the webhook and processes it.
- * It checks for duplicates, parses the SMS, and saves the transaction to the sheet.
- * It also checks for recurring payments and updates the status accordingly.
- * It also refreshes the account balances and credit card balances.
- * 
+ * HTTP entry orchestration — parse, categorize, persist.
  ************************************************************/
 
 const Webhook = {
     /************************************************************
      * HANDLE INCOMING SMS
      ************************************************************/
-    doPost(e) {
+    handle(e) {
         const lock = LockService.getScriptLock();
+        let lockAcquired = false;
 
         try {
+            lock.waitLock(30000);
+            lockAcquired = true;
+
+            let data = {};
+            if (e.postData && e.postData.contents) {
+                try {
+                    data = JSON.parse(e.postData.contents);
+                } catch (parseErr) {
+                    return Webhook.jsonResponse({
+                        status: "error",
+                        message: "invalid JSON body"
+                    });
+                }
+            }
+
+            const auth = Security.validateWebhookSecret(e, data);
+            if (!auth.valid) {
+                Logger.log("Webhook unauthorized: " + auth.reason);
+                return Webhook.jsonResponse({
+                    status: "unauthorized",
+                    reason: auth.reason
+                });
+            }
+
             const ss = SpreadsheetApp.getActiveSpreadsheet();
             const tz = Config.getTimezone(ss);
             const now = new Date();
 
-            const monthName = Utilities.formatDate(now, tz, "MMM_yyyy");
-            const sheetName = "Transactions_" + monthName;
-
-            let sheet = ss.getSheetByName(sheetName);
-            const isNewSheet = !sheet;
-            if (isNewSheet) sheet = createMonthlySheet(ss, sheetName);
-
-            const data = JSON.parse(e.postData.contents);
             const rawSms = data.message || "";
             const sender = data.sender || "";
             const smsId = data.smsId || "";
 
-            // DUPLICATE CHECK
-            if (smsId && isDuplicateSms(smsId)) {
-                return jsonResponse({
-                    status: "duplicate"
-                });
+            if (smsId && Transactions.isDuplicate(smsId)) {
+                return Webhook.jsonResponse({ status: "duplicate" });
             }
 
-            // UNIVERSAL PARSER
-            const parsed = parseSms(rawSms, sender);
+            const parsed = Parser.parseSms(rawSms, sender);
 
             if (!parsed) {
-                return jsonResponse({
+                return Webhook.jsonResponse({
                     status: "ignored",
                     reason: "unable to parse"
                 });
             }
 
-            // IGNORE NON-TRANSACTION SMS
             if (parsed.ignored) {
-                return jsonResponse({
+                return Webhook.jsonResponse({
                     status: "ignored",
                     reason: parsed.reason
                 });
             }
 
-            // CONFIDENCE CHECK
             if (parsed.confidence < 0.5) {
-                Logging.logUnknownSms(data, parsed);
-
-                return jsonResponse({
+                Logging.logUnknownSms(Security.redactRequestBody(data), parsed);
+                return Webhook.jsonResponse({
                     status: "ignored",
                     reason: "low confidence"
                 });
             }
 
-            // EXTRA SAFETY CHECKS
             if (!parsed.amount || parsed.type === "Unknown") {
-                Logging.logUnknownSms(data, parsed);
-
-                return jsonResponse({
+                Logging.logUnknownSms(Security.redactRequestBody(data), parsed);
+                return Webhook.jsonResponse({
                     status: "ignored",
                     reason: "missing critical fields"
                 });
             }
 
-
-            const bank = resolveAccountDisplayName(ss, parsed.bank);
+            const bankDisplayName = Main.resolveAccountDisplayName(ss, parsed.bank);
 
             const timeStr = Utilities.formatDate(now, tz, "HH:mm");
             const dayStr = Utilities.formatDate(now, tz, "EEE");
-            const category = CgetSmartCategory(ss, entity, amount, timeStr, dayStr);
+            const category = Categories.getSmartCategory(
+                ss, parsed.entity, parsed.amount, timeStr, dayStr
+            );
 
-            // SAVE TO SHEET
-            sheet.appendRow([
+            Transactions.save(ss, {
                 now,
-                parsed.type,
-                parsed.amount,
-                parsed.entity,
-                category || parsed.category || "Misc",
-                parsed.labels ? parsed.labels.join(", ") : "",
-                bank || parsed.bank || "Unknown",
+                tz,
+                parsed,
+                category,
+                bankDisplayName,
                 rawSms
-            ]);
+            });
 
-            checkRecurringMatch(ss, now, parsed.amount, parsed.entity, category);
+            Webhook.checkRecurringMatch(ss, now, parsed.amount, parsed.entity, category);
 
-            if (isNewSheet) {
-                refreshAccountBalances();
-                refreshCCBalances();
-            }
-
-            return jsonResponse({
+            return Webhook.jsonResponse({
                 status: "success",
                 parsed: {
                     type: parsed.type,
@@ -114,10 +111,10 @@ const Webhook = {
             });
 
         } catch (err) {
-            Logger.error(err);
-            return jsonResponse({ status: "error", message: err.toString() });
+            Logger.log("Webhook error: " + err);
+            return Webhook.jsonResponse({ status: "error", message: err.toString() });
         } finally {
-            lock.releaseLock();
+            if (lockAcquired) lock.releaseLock();
         }
     },
 
@@ -145,21 +142,9 @@ const Webhook = {
         }
     },
 
-    isDuplicateSms(smsId) {
-        if (!smsId) return false;
-
-        const cache = CacheService.getScriptCache();
-
-        const existing = cache.get(smsId);
-        if (existing) return true;
-
-        cache.put(smsId, "1", 21600);
-        return false;
-    },
-
     jsonResponse(obj) {
         return ContentService
             .createTextOutput(JSON.stringify(obj))
             .setMimeType(ContentService.MimeType.JSON);
     }
-}
+};

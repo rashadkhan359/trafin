@@ -10,7 +10,7 @@ const DataGuard = {
     verifyTransactionSheet(sheet) {
         if (sheet.getLastRow() < 5) return;
         const current = sheet.getRange(5, 1, 1, sheet.getLastColumn()).getValues()[0];
-        TRANSACTION_COLS.forEach((expected, i) => {
+        TxSchema.HEADERS.forEach((expected, i) => {
             if (current[i] !== expected) {
                 sheet.getRange(5, i + 1).setValue(expected)
                     .setFontWeight("bold").setBackground("#eeeeee");
@@ -41,22 +41,22 @@ const DataGuard = {
         Logger.log("DataGuard: Starting verification...");
         ss.getSheets()
             .filter(s => s.getName().startsWith("Transactions_"))
-            .forEach(s => this.verifyTransactionSheet(s));
+            .forEach(s => DataGuard.verifyTransactionSheet(s));
 
-        this.verifySettingsSheet(ss, "Settings",
+        DataGuard.verifySettingsSheet(ss, "Settings",
             ["Section", "Key", "Value", "Notes"]);
-        this.verifySettingsSheet(ss, "Settings_Mapping",
+        DataGuard.verifySettingsSheet(ss, "Settings_Mapping",
             ["Keyword", "Category", "Days (Mon-Sun, blank=any)", "Notes"]);
-        this.verifySettingsSheet(ss, "Settings_Rules",
+        DataGuard.verifySettingsSheet(ss, "Settings_Rules",
             ["Rule Name", "Start Time (HH:mm)", "End Time (HH:mm)",
                 "Max Amount (₹)", "Days (Mon-Sun, blank=any)", "Category"]);
-        this.verifySettingsSheet(ss, "Settings_Recurring",
+        DataGuard.verifySettingsSheet(ss, "Settings_Recurring",
             ["Name", "Amount (₹)", "Due Day (1-31)", "Keyword Match",
                 "Account", "Category", "Status", "Notes"]);
-        this.verifySettingsSheet(ss, "Accounts",
+        DataGuard.verifySettingsSheet(ss, "Accounts",
             ["Bank", "Account Type", "Initial Balance (₹)",
                 "Current Balance (₹)", "Currency", "Notes"]);
-        this.verifySettingsSheet(ss, "Accounts_CC",
+        DataGuard.verifySettingsSheet(ss, "Accounts_CC",
             ["Bank", "Card Name", "Last 4 Digits", "Credit Limit (₹)",
                 "Initial Outstanding (₹)", "Current Outstanding (₹)",
                 "Available Limit (₹)", "Currency", "Notes"]);
