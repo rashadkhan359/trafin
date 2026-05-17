@@ -372,4 +372,18 @@ const Sheet = {
             ss.insertSheet("Dashboard", 0);
         }
     },
+
+    setupAnalyticsSheet(ss) {
+        if (!ss.getSheetByName("Analytics")) {
+            const dash = ss.getSheetByName("Dashboard");
+            const index = dash ? 1 : 0;
+            const sheet = ss.insertSheet("Analytics", index);
+            sheet.getRange(1, 1, 1, 4)
+                .merge()
+                .setValue("TraFin Analytics — run TraFin → Update Dashboard to populate")
+                .setFontWeight("bold")
+                .setBackground("#eceff1");
+            sheet.setTabColor("#78909c");
+        }
+    },
 }

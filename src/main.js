@@ -22,6 +22,7 @@ const Main = {
         Sheet.setupAccountsCCSheet(ss);
         Sheet.setupBudgetSheet(ss);
         Sheet.setupDashboardSheet(ss);
+        Sheet.setupAnalyticsSheet(ss);
 
         Backup.migrateExistingTransactions(ss);
         SettingsSync.refreshAll(ss);
