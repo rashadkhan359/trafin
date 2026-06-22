@@ -1,0 +1,11 @@
+**/**
+!src/**
+!appsscript.json
+!Code.js
+node_modules/**
+docs/**
+scripts/**
+package.json
+package-lock.json
+README.md
+.git/**
