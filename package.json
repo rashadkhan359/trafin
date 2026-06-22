@@ -1,0 +1,13 @@
+{
+  "name": "trafin",
+  "private": true,
+  "description": "TraFin — Google Apps Script dev tooling",
+  "devDependencies": {
+    "@google/clasp": "^2.4.2"
+  },
+  "scripts": {
+    "clasp:pull": "clasp pull",
+    "clasp:push": "clasp push",
+    "test:parser": "node scripts/test-parser-samples.js"
+  }
+}

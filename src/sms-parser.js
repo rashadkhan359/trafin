@@ -120,6 +120,15 @@ const Parser = {
       };
     }
 
+    // Add this block BEFORE the debited check
+    if (lower.includes("sent") && /from\s+kotak\s+bank/i.test(rawSms)) {
+      const m = rawSms.match(/to\s+([\w.@]+)\s+on/i);
+      return {
+        type: "Debit",
+        entity: m ? m[1].trim() : "Unknown"
+      };
+    }
+
     // Standard UPI / account debit
     if (lower.includes("debited") || rawSms.toLowerCase().includes("debited")) {
       const m = rawSms.match(/credited to\s+(.+?)\s+via/i) ||
@@ -199,33 +208,50 @@ const Parser = {
   /************************************************************
    * IGNORE NON-TRANSACTION SMS
    ************************************************************/
-  shouldIgnoreSms(sms) {
-
+  shouldIgnoreSms(sms, sender) {
     const lower = sms.toLowerCase();
-
-    const ignoreKeywords = [
-
+  
+    // Hard ignore — these never contain real transactions
+    const hardIgnore = [
       "otp",
       "one time password",
       "reward point",
-      "reward points",
       "loan offer",
+      "pre-approved",
       "pre approved",
-      "credit limit",
-      "minimum due",
       "emi due",
+      "minimum due",
       "statement generated",
       "kyc",
       "insurance offer",
-      "cashback offer",
       "voucher",
-      "dear customer",
-      "available credit limit"
+      "available credit limit",
+      "is due on",
+      "is due for payment",
+      "ignore if already paid",
+      "please ignore if",
+      "special gift",
+      "every year",
+      "postpaid plan",
+      "passbook balance",       // catches the provident fund SMS
+      "contribution of",        // catches the provident fund SMS
     ];
+  
+    if (hardIgnore.some(k => lower.includes(k))) return true;
 
-    return ignoreKeywords.some(k =>
-      lower.includes(k)
-    );
+    // "dear customer" only ignore if no debit/credit verb present
+    if (lower.includes("dear customer")) {
+      const hasTxnVerb = /(debited|credited|sent|received|spent)\s/i.test(sms);
+      if (!hasTxnVerb) return true;
+    }
+
+    // "credit limit" — ignore if no transaction verb
+    if (lower.includes("credit limit") &&
+        !/(debited|spent|sent)\b/i.test(lower)) {
+      return true;
+    }
+  
+    return false;
   },
 
   /************************************************************
