@@ -48,8 +48,13 @@ const Webhook = {
             Logger.log("Webhook: received SMS | sender=" + sender + " | smsId=" + smsId
                 + " | message=" + rawSms.substring(0, 80));
 
-            if (smsId && Transactions.isDuplicate(smsId)) {
-                Logger.log("Webhook: duplicate smsId=" + smsId + " — skipping");
+            // Dedup key includes sender so that a self-transfer (same UPI ref in
+            // both the debit bank's SMS and the credit bank's SMS) is NOT collapsed
+            // into a single entry — they have different senders and are two distinct
+            // transactions. Only a true re-delivery of the exact same SMS is skipped.
+            const dedupKey = smsId ? (smsId + "|" + sender) : "";
+            if (dedupKey && Transactions.isDuplicate(dedupKey)) {
+                Logger.log("Webhook: duplicate dedupKey=" + dedupKey + " — skipping");
                 return Webhook.jsonResponse({ status: "duplicate" });
             }
 
