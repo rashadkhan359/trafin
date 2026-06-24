@@ -50,10 +50,16 @@ const Transactions = {
     },
 
     /************************************************************
-     * APPEND — write one transaction row to sheet
+     * APPEND — write one transaction row to sheet.
+     * If lowConfidence is true, highlights the row in orange so
+     * the user can review it rather than the row being silently dropped.
      ************************************************************/
-    append(ss, sheet, row) {
+    append(ss, sheet, row, lowConfidence) {
         sheet.appendRow(row);
+        if (lowConfidence) {
+            const lastRow = sheet.getLastRow();
+            sheet.getRange(lastRow, 1, 1, row.length).setBackground("#ffe0b2");
+        }
         Sheet.ensureTransactionDropdowns(ss, sheet);
     },
 
@@ -61,7 +67,7 @@ const Transactions = {
      * SAVE — orchestrate sheet, row build, append, balance refresh
      ************************************************************/
     save(ss, params) {
-        const { now, tz, parsed, category, bankDisplayName, rawSms } = params;
+        const { now, tz, parsed, category, bankDisplayName, rawSms, lowConfidence } = params;
 
         const { sheet, isNewSheet } = Transactions.getMonthlySheet(ss, now, tz);
         const row = Transactions.buildRow({
@@ -72,7 +78,7 @@ const Transactions = {
             rawSms
         });
 
-        Transactions.append(ss, sheet, row);
+        Transactions.append(ss, sheet, row, lowConfidence);
 
         if (isNewSheet) {
             Main.refreshAccountBalances();

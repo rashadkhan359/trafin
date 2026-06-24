@@ -20,6 +20,7 @@ const Webhook = {
                 try {
                     data = JSON.parse(e.postData.contents);
                 } catch (parseErr) {
+                    Logger.log("Webhook: invalid JSON body — " + parseErr);
                     return Webhook.jsonResponse({
                         status: "error",
                         message: "invalid JSON body"
@@ -29,7 +30,7 @@ const Webhook = {
 
             const auth = Security.validateWebhookSecret(e, data);
             if (!auth.valid) {
-                Logger.log("Webhook unauthorized: " + auth.reason);
+                Logger.log("Webhook: unauthorized — " + auth.reason);
                 return Webhook.jsonResponse({
                     status: "unauthorized",
                     reason: auth.reason
@@ -44,40 +45,54 @@ const Webhook = {
             const sender = data.sender || "";
             const smsId = data.smsId || "";
 
+            Logger.log("Webhook: received SMS | sender=" + sender + " | smsId=" + smsId
+                + " | message=" + rawSms.substring(0, 80));
+
             if (smsId && Transactions.isDuplicate(smsId)) {
+                Logger.log("Webhook: duplicate smsId=" + smsId + " — skipping");
                 return Webhook.jsonResponse({ status: "duplicate" });
             }
 
             const parsed = Parser.parseSms(rawSms, sender);
 
             if (!parsed) {
+                Logger.log("Webhook: parseSms returned null — unable to parse | sender=" + sender);
                 return Webhook.jsonResponse({
                     status: "ignored",
                     reason: "unable to parse"
                 });
             }
 
+            Logger.log("Webhook: parsed — type=" + parsed.type + " amount=" + parsed.amount
+                + " entity=" + parsed.entity + " bank=" + parsed.bank
+                + " confidence=" + parsed.confidence + " ignored=" + parsed.ignored);
+
             if (parsed.ignored) {
+                Logger.log("Webhook: SMS ignored by parser — reason=" + parsed.reason);
                 return Webhook.jsonResponse({
                     status: "ignored",
                     reason: parsed.reason
                 });
             }
 
-            if (parsed.confidence < 0.5) {
-                Logging.logUnknownSms(Security.redactRequestBody(data), parsed);
-                return Webhook.jsonResponse({
-                    status: "ignored",
-                    reason: "low confidence"
-                });
-            }
-
+            // Missing amount or Unknown type: nothing useful to record — skip.
             if (!parsed.amount || parsed.type === "Unknown") {
+                Logger.log("Webhook: missing critical fields — amount=" + parsed.amount
+                    + " type=" + parsed.type + " | logging to Unknown_SMS");
                 Logging.logUnknownSms(Security.redactRequestBody(data), parsed);
                 return Webhook.jsonResponse({
                     status: "ignored",
                     reason: "missing critical fields"
                 });
+            }
+
+            // Low confidence: still write to sheet but highlight the row in orange
+            // so the user can review rather than silently losing the transaction.
+            const lowConfidence = parsed.confidence < 0.5;
+            if (lowConfidence) {
+                Logger.log("Webhook: low confidence=" + parsed.confidence
+                    + " — writing to sheet with orange highlight");
+                Logging.logUnknownSms(Security.redactRequestBody(data), parsed);
             }
 
             const bankDisplayName = Main.resolveAccountDisplayName(ss, parsed.bank);
@@ -94,10 +109,14 @@ const Webhook = {
                 parsed,
                 category,
                 bankDisplayName,
-                rawSms
+                rawSms,
+                lowConfidence
             });
 
             Webhook.checkRecurringMatch(ss, now, parsed.amount, parsed.entity, category);
+
+            Logger.log("Webhook: success — type=" + parsed.type + " amount=" + parsed.amount
+                + " entity=" + parsed.entity + " lowConfidence=" + lowConfidence);
 
             return Webhook.jsonResponse({
                 status: "success",

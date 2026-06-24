@@ -120,9 +120,12 @@ const Parser = {
       };
     }
 
-    // Add this block BEFORE the debited check
+    // Kotak UPI debit: "Sent Rs.X from Kotak Bank AC XNNNN to VPA on DATE"
+    // The VPA may be glued to "to" with no space (e.g. "topaytm.s25fvw3@pty"),
+    // so try with-space first, then fall back to no-space.
     if (lower.includes("sent") && /from\s+kotak\s+bank/i.test(rawSms)) {
-      const m = rawSms.match(/to\s+([\w.@]+)\s+on/i);
+      const m = rawSms.match(/to\s+([\w.@-]+)\s+on/i)
+             || rawSms.match(/to([\w.@-]+)\s+on/i);
       return {
         type: "Debit",
         entity: m ? m[1].trim() : "Unknown"
@@ -484,6 +487,9 @@ const Parser = {
     const patterns = [
 
       /A\/c(?:XX|X+)?(\d{3,6})/i,
+
+      // Kotak format: "AC X0916" or "AC XX0916" (space between AC and masked digits)
+      /\bAC\s+X+(\d{3,6})\b/i,
 
       /Acct(?:XX|X+)?(\d{3,6})/i,
 
