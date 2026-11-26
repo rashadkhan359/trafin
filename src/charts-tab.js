@@ -14,20 +14,28 @@
 const ChartsTab = {
 
     SHEET: "Charts",
-    COLORS: { spent: "#f47230", income: "#257de0", single: "#257de0" },
+    COLORS: { spent: "#f47230", income: "#257de0", cashOut: "#00b894", single: "#257de0" },
     EXCLUDED: ["Transfer", "CC Payment"],
     MONTHS: ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
 
     /** Pure: totals for one month's rows (TxSchema order). */
     summarize(rows) {
-        const out = { spent: 0, income: 0, byCategory: {}, byPayee: {} };
+        // spent   = purchases, counted when made (card purchases included)
+        // cashOut = money that actually left bank accounts: bank debits plus
+        //           card bill payments; card purchases are not cash yet
+        const out = { spent: 0, income: 0, cashOut: 0, byCategory: {}, byPayee: {} };
         const payeeNames = {}; // "blinkit" -> first spelling seen, so BLINKIT and Blinkit merge
         rows.forEach(r => {
             const type = r[1];
             const amount = Number(r[2]) || 0;
             const category = (r[4] || "Misc").toString();
-            if (!r[0] || !amount || ChartsTab.EXCLUDED.indexOf(category) >= 0) return;
+            if (!r[0] || !amount) return;
+
+            const onCard = /\(\.\.\.\w{4}\)$/.test((r[6] || "").toString().trim());
+            if (type === "CC_Payment") { out.cashOut += amount; return; }
+            if (ChartsTab.EXCLUDED.indexOf(category) >= 0) return;
+            if (type === "Debit" && !onCard) out.cashOut += amount;
 
             if (type === "Debit") {
                 out.spent += amount;
@@ -89,14 +97,15 @@ const ChartsTab = {
         sheet.clearContents();
 
         // ---- data tables (columns A-H); charts sit to the right from column J
-        const monthly = [["Month", "Spent", "Income"]].concat(
+        const monthly = [["Month", "Spent", "Income", "Cash out"]].concat(
             months.map(m => [m.label,
                 Math.round(m.stats.spent * 100) / 100,
-                Math.round(m.stats.income * 100) / 100]));
+                Math.round(m.stats.income * 100) / 100,
+                Math.round(m.stats.cashOut * 100) / 100]));
         const cats = [["Category", "Spent"]].concat(ChartsTab.top(current.stats.byCategory, 10));
         const payees = [["Payee", "Spent"]].concat(ChartsTab.top(current.stats.byPayee, 10));
 
-        sheet.getRange(1, 1, monthly.length, 3).setValues(monthly);
+        sheet.getRange(1, 1, monthly.length, 4).setValues(monthly);
         sheet.getRange(1, 5, cats.length, 2).setValues(cats);
         sheet.getRange(1, 7 + 1, payees.length, 2).setValues(payees);
         sheet.getRange("A1:I1").setFontWeight("bold");
@@ -113,10 +122,11 @@ const ChartsTab = {
 
         sheet.insertChart(base(sheet.newChart()
             .setChartType(Charts.ChartType.COLUMN)
-            .addRange(sheet.getRange(1, 1, monthly.length, 3))
+            .addRange(sheet.getRange(1, 1, monthly.length, 4))
             .setNumHeaders(1)
-            .setOption("title", "Spent vs income by month (₹, transfers excluded)")
-            .setOption("colors", [ChartsTab.COLORS.spent, ChartsTab.COLORS.income])
+            .setOption("title", "Spent, income and cash out by month (₹, transfers excluded)")
+            .setOption("colors", [ChartsTab.COLORS.spent, ChartsTab.COLORS.income,
+                ChartsTab.COLORS.cashOut])
             .setOption("legend", { position: "top", textStyle: text })
             .setPosition(1, 11, 0, 0)).build());
 

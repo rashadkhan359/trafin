@@ -462,6 +462,8 @@ Each monthly tab totals **every Debit** and **every Credit** across all your acc
 - Set Category = **Transfer** on money you move between your own accounts, and on money that is not really income or spending (a friend paying you back, cash you pass on for someone).
 - Card purchases count when you make them, so paying the card bill (**CC Payment**) is not counted again.
 
+The Dashboard also shows **Cash Out** — money that actually left your bank accounts this month: bank debits plus card bill payments, without card purchases (those leave your account only when you pay the bill). **Total Spent** answers "what did I buy", **Cash Out** answers "how much left my accounts". If you pay the card bill through an app such as CRED, map its payee (e.g. `cred club`) to category **CC Payment** in `Settings_Mapping`, so the bank-side debit is not counted on top of the card payment row.
+
 Large one-off rows (rent, loan instalments, lending money) are real debits and are included; give them their own category so the Budget tab separates them. After changing the formulas in the code, **TraFin → Sync Dropdowns & Balances** rewrites the summary on all month tabs.
 
 ### Keeping balances exact

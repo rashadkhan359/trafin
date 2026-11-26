@@ -30,12 +30,19 @@ const Dashboard = {
             const expense = curSheet.getRange("B2").getValue();
             const income = curSheet.getRange("B3").getValue();
             const net = curSheet.getRange("B4").getValue();
-            dash.getRange(row, 1, 3, 2).setValues([
-                ["Total Spent", expense],
+            // Cash out = bank debits + card bill payments (card purchases are not cash yet)
+            const lastTx = curSheet.getLastRow();
+            const stats = ChartsTab.summarize(lastTx >= 6
+                ? curSheet.getRange(6, 1, lastTx - 5, TxSchema.HEADERS.length).getValues()
+                : []);
+            dash.getRange(row, 1, 5, 2).setValues([
+                ["Total Spent (purchases, incl. card)", expense],
                 ["Total Income", income],
-                ["Net Balance", net]
+                ["Net Balance", net],
+                ["Cash Out (left your bank accounts)", Math.round(stats.cashOut * 100) / 100],
+                ["Net Cash (income − cash out)", Math.round((income - stats.cashOut) * 100) / 100]
             ]);
-            row += 3;
+            row += 5;
         }
         row++;
 
