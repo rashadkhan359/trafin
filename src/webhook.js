@@ -254,6 +254,14 @@ const Webhook = {
     },
 
     checkRecurringMatch(ss, txDate, amount, entity, category) {
+        // Same rule as the Dashboard: scan this month's rows (keyword or category + amount)
+        try {
+            SpreadsheetApp.flush();
+            Main.refreshRecurringStatus(ss);
+        } catch (err) {
+            Logger.log("Recurring refresh failed: " + err);
+        }
+
         const sheet = ss.getSheetByName("Settings_Recurring");
         if (!sheet) return;
 

@@ -76,7 +76,7 @@ const DEFAULT_CATEGORIES = [
     "Shopping", "Clothing", "Electronics", "Entertainment",
     "OTT Subscriptions", "Health", "Medical", "Education",
     "Dining Out", "Coffee", "Personal Care", "Gym",
-    "CC Payment", "Transfer", "Income", "Misc"
+    "CC Payment", "Transfer", "Income", "Untracked", "Misc"
 ];
 
 /************************************************************

@@ -34,6 +34,17 @@ const Sheet = {
         ];
     },
 
+    /** Add a category to Settings_Categories if it is not there yet. */
+    ensureCategory(ss, name) {
+        const sheet = ss.getSheetByName("Settings_Categories");
+        if (!sheet) return;
+        const last = sheet.getLastRow();
+        const existing = last > 1
+            ? sheet.getRange(2, 1, last - 1, 1).getValues().map(r => (r[0] || "").toString())
+            : [];
+        if (existing.indexOf(name) === -1) sheet.getRange(last + 1, 1).setValue(name);
+    },
+
     /** Rewrite the summary formulas on every existing monthly sheet. */
     refreshMonthlySummaries(ss) {
         ss.getSheets()

@@ -24,7 +24,8 @@ const ChartsTab = {
         // spent   = purchases, counted when made (card purchases included)
         // cashOut = money that actually left bank accounts: bank debits plus
         //           card bill payments; card purchases are not cash yet
-        const out = { spent: 0, income: 0, cashOut: 0, byCategory: {}, byPayee: {} };
+        const out = { spent: 0, income: 0, cashOut: 0, untrackedOut: 0, untrackedIn: 0,
+            byCategory: {}, byPayee: {} };
         const payeeNames = {}; // "blinkit" -> first spelling seen, so BLINKIT and Blinkit merge
         rows.forEach(r => {
             const type = r[1];
@@ -36,6 +37,10 @@ const ChartsTab = {
             if (type === "CC_Payment") { out.cashOut += amount; return; }
             if (ChartsTab.EXCLUDED.indexOf(category) >= 0) return;
             if (type === "Debit" && !onCard) out.cashOut += amount;
+            if (category === "Untracked") {
+                if (type === "Debit") out.untrackedOut += amount;
+                else if (type === "Credit") out.untrackedIn += amount;
+            }
 
             if (type === "Debit") {
                 out.spent += amount;

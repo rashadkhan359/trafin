@@ -451,7 +451,7 @@ In the spreadsheet, refresh the page. Menu **TraFin**:
 | Sync Dropdowns & Balances | Rebuilds the Category and Bank dropdowns and balance formulas. Run it if a Bank cell shows "invalid" after you rename an account or card |
 | Refresh Account Balances / Refresh CC Balances | Rewrites the balance formulas over all monthly tabs |
 | Clean Up Transactions | Re-checks every row against the current rules: promo/reminder/duplicate rows are **moved** to `Removed_SMS`; Unknown entities, Misc categories and Other / old-card banks are filled in. Rows you typed by hand are not touched |
-| Reconcile Balances | Asks for the real balance of each account and card and adjusts the *Initial Balance* so the sheet matches. Run it whenever the sheet and your bank app disagree |
+| Reconcile Balances | Asks for the real balance of each account and card. Any difference is added to the current month as an **Untracked** row on that account, so the balance becomes exact and the untracked amount stays visible (Dashboard, totals, charts). Run it whenever the sheet and your bank app disagree |
 | Reset Recurring (New Month) | Marks recurring items unpaid |
 | Re-run Initialization | Safe repair of sheet structure |
 
@@ -471,7 +471,11 @@ Large one-off rows (rent, loan instalments, lending money) are real debits and a
 Banks skip some alerts, so no SMS/notification tracker is 100% complete. TraFin gives you two tools:
 
 - **Balance Check column** (`Accounts`, `Accounts_CC`): whenever an SMS states your balance (`Avl Bal …`) or card limit (`Avl limit …`), TraFin compares it to the sheet and writes `✓ Matches bank …` or `⚠ … difference …` with the date. A ⚠ tells you the day something went missing.
-- **Reconcile Balances**: enter the real figures from your bank app; the sheet is corrected in seconds.
+- **Reconcile Balances**: enter the real figures from your bank app. The sheet does not hide the gap: it writes a row with Entity `Untracked (reconcile)` and Category `Untracked` for the difference (money out, money in, or a card payment). The Dashboard lists "Untracked money out / in" for the month. If you later work out what it was, edit that row's Entity and Category — or delete it and add the real transactions.
+
+### Recurring payments
+
+An item in `Settings_Recurring` turns **Paid** when this month's tab has a debit within 10% of its Amount that either contains the **Keyword Match** in the Entity or has the item's **Category**. So for Rent you can simply categorise the payment as `Rent`; you do not need the landlord's name as keyword. It is checked on every new transaction and on **Update Dashboard**, and works for imported or hand-typed rows. Statuses reset with **Reset Recurring (New Month)**.
 
 ### Tabs TraFin creates
 

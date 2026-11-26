@@ -134,26 +134,31 @@ const Main = {
     },
 
     /************************************************************
-     * RECONCILE — ask for the real balance of each account / card and
-     * adjust the Initial Balance (or Initial Outstanding) so the computed
-     * current figure matches. Transactions are not changed.
+     * RECONCILE — ask for the real balance of each account / card.
+     * The difference is recorded as an "Untracked" transaction on that
+     * account (dated now), so balances become exact AND the amount that
+     * was never tracked stays visible in the month's totals, the
+     * Dashboard and the charts. Nothing else is changed.
      ************************************************************/
     reconcileBalances() {
         const ss = SpreadsheetApp.getActiveSpreadsheet();
         const ui = SpreadsheetApp.getUi();
+        const tz = Config.getTimezone(ss);
+        const now = new Date();
 
         Main.refreshAccountBalances();
         Main.refreshCCBalances();
         SpreadsheetApp.flush();
 
         const targets = [
-            { sheetName: "Accounts",    initialCol: 3, currentCol: 4, what: "balance",
+            { sheetName: "Accounts",    currentCol: 4, what: "balance", card: false,
               label: row => `${row[0]} ${row[1]}`.trim() },
-            { sheetName: "Accounts_CC", initialCol: 5, currentCol: 6, what: "outstanding (amount owed)",
+            { sheetName: "Accounts_CC", currentCol: 6, what: "outstanding (amount owed)", card: true,
               label: row => `${row[1]} (...${row[2]})` }
         ];
 
-        const changes = [];
+        const adjustments = [];
+        const lines = [];
 
         for (const t of targets) {
             const sheet = ss.getSheetByName(t.sheetName);
@@ -164,7 +169,6 @@ const Main = {
                 if (!rows[i][0]) continue;
 
                 const name = t.label(rows[i]);
-                const initial = Number(rows[i][t.initialCol - 1]) || 0;
                 const current = Number(rows[i][t.currentCol - 1]) || 0;
 
                 const res = ui.prompt(
@@ -174,7 +178,7 @@ const Main = {
                     "Leave blank to skip this one.",
                     ui.ButtonSet.OK_CANCEL
                 );
-                if (res.getSelectedButton() !== ui.Button.OK) return;
+                if (res.getSelectedButton() !== ui.Button.OK) break;
 
                 const text = res.getResponseText().replace(/[₹,\s]/g, "");
                 if (!text) continue;
@@ -184,15 +188,96 @@ const Main = {
                     continue;
                 }
 
-                const newInitial = Math.round((initial + (actual - current)) * 100) / 100;
-                sheet.getRange(i + 2, t.initialCol).setValue(newInitial);
-                changes.push(name + ": " + current.toFixed(2) + " → " + actual.toFixed(2));
+                const adj = Main.reconcileAdjustment(current, actual, t.card);
+                if (!adj) {
+                    lines.push(name + ": already matches (" + actual.toFixed(2) + ")");
+                    continue;
+                }
+                adjustments.push([now, adj.type, adj.amount, "Untracked (reconcile)",
+                    "Untracked", "reconcile", name, ""]);
+                lines.push(name + ": " + current.toFixed(2) + " → " + actual.toFixed(2) +
+                    "  (untracked " + (adj.type === "Debit" ? "money out"
+                        : adj.type === "CC_Payment" ? "card payment" : "money in") +
+                    ": " + adj.amount.toFixed(2) + ")");
             }
         }
 
-        Main.alert(changes.length
-            ? "Balances reconciled:\n\n" + changes.join("\n")
+        if (adjustments.length) {
+            Sheet.ensureCategory(ss, "Untracked");
+            const monthly = Transactions.getMonthlySheet(ss, now, tz);
+            monthly.sheet.getRange(monthly.sheet.getLastRow() + 1, 1,
+                adjustments.length, adjustments[0].length).setValues(adjustments);
+            Sheet.ensureTransactionDropdowns(ss, monthly.sheet);
+            Main.refreshAccountBalances();
+            Main.refreshCCBalances();
+        }
+
+        Main.alert(lines.length
+            ? "Reconcile result:\n\n" + lines.join("\n") +
+              (adjustments.length ? "\n\nEach difference was added to this month's sheet as an " +
+              "'Untracked' row. If you later find what it was, edit that row." : "")
             : "Nothing changed.");
+    },
+
+    /************************************************************
+     * Pure: the transaction that explains a balance difference.
+     * Bank: real balance lower than sheet  -> untracked Debit.
+     * Card: real amount owed higher than sheet -> untracked Debit (spend);
+     *       lower -> CC_Payment (a payment the sheet never saw).
+     * Returns null when the difference is under 1 paisa.
+     ************************************************************/
+    reconcileAdjustment(sheetValue, realValue, isCard) {
+        const diff = Math.round((realValue - sheetValue) * 100) / 100;
+        if (Math.abs(diff) < 0.01) return null;
+        if (isCard) {
+            // owing less than the sheet thinks = a card payment the sheet never saw
+            return { type: diff > 0 ? "Debit" : "CC_Payment", amount: Math.abs(diff) };
+        }
+        return { type: diff < 0 ? "Debit" : "Credit", amount: Math.abs(diff) };
+    },
+
+    /************************************************************
+     * RECURRING — mark an item Paid when this month's sheet has a debit
+     * that matches it: the keyword appears in the Entity, or the row has
+     * the item's Category, and the amount is within 10%. Works for
+     * imported and hand-typed rows too. Never un-marks a Paid item.
+     ************************************************************/
+    refreshRecurringStatus(ss) {
+        const sheet = ss.getSheetByName("Settings_Recurring");
+        if (!sheet || sheet.getLastRow() < 2) return;
+
+        const tz = Config.getTimezone(ss);
+        const tx = ss.getSheetByName(
+            "Transactions_" + Utilities.formatDate(new Date(), tz, "MMM_yyyy"));
+        if (!tx || tx.getLastRow() < 6) return;
+
+        const rows = tx.getRange(6, 1, tx.getLastRow() - 5, 5).getValues();
+        const items = sheet.getRange(2, 1, sheet.getLastRow() - 1, 7).getValues();
+
+        items.forEach((item, i) => {
+            if (!item[0] || item[6] === "Paid") return;
+            if (Main.recurringIsPaid(item, rows)) {
+                sheet.getRange(i + 2, 7).setValue("Paid").setBackground("#d9ead3");
+            }
+        });
+    },
+
+    /** Pure: item = Settings_Recurring row, rows = [Timestamp, Type, Amount, Entity, Category]. */
+    recurringIsPaid(item, rows) {
+        const expected = Number(item[1]) || 0;
+        const keyword = (item[3] || "").toString().trim().toLowerCase();
+        const category = (item[5] || "").toString().trim().toLowerCase();
+        if (expected <= 0) return false;
+
+        return rows.some(r => {
+            if (r[1] !== "Debit") return false;
+            const amount = Number(r[2]) || 0;
+            if (Math.abs(amount - expected) / expected > 0.10) return false;
+            const entity = (r[3] || "").toString().toLowerCase();
+            const rowCat = (r[4] || "").toString().trim().toLowerCase();
+            return (keyword && entity.indexOf(keyword) >= 0) ||
+                (category && category !== "misc" && rowCat === category);
+        });
     },
 
     resetRecurringStatus() {

@@ -43,6 +43,15 @@ const Dashboard = {
                 ["Net Cash (income − cash out)", Math.round((income - stats.cashOut) * 100) / 100]
             ]);
             row += 5;
+
+            // Differences found by Reconcile Balances this month (already inside the totals above)
+            if (stats.untrackedOut || stats.untrackedIn) {
+                dash.getRange(row, 1, 2, 2).setValues([
+                    ["Untracked money out (found at reconcile)", Math.round(stats.untrackedOut * 100) / 100],
+                    ["Untracked money in (found at reconcile)", Math.round(stats.untrackedIn * 100) / 100]
+                ]).setBackground("#fff2cc");
+                row += 2;
+            }
         }
         row++;
 
@@ -83,6 +92,9 @@ const Dashboard = {
             .setValues([["Name", "Amount", "Due Day", "Status"]])
             .setFontWeight("bold").setBackground("#fce5cd");
         row++;
+
+        Main.refreshRecurringStatus(ss);
+        SpreadsheetApp.flush();
 
         const recurSheet = ss.getSheetByName("Settings_Recurring");
         if (recurSheet && recurSheet.getLastRow() > 1) {
