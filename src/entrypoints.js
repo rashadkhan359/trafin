@@ -48,3 +48,11 @@ function resetRecurringStatus() {
 function autoMonthlyReset() {
   return Main.autoMonthlyReset();
 }
+
+function cleanUpTransactions() {
+  return Cleanup.run();
+}
+
+function reconcileBalances() {
+  return Main.reconcileBalances();
+}

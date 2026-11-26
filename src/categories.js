@@ -2,11 +2,24 @@ const Categories = {
     /************************************************************
      * SMART CATEGORIZATION
      ************************************************************/
-    getSmartCategory(ss, entity, amount, timeStr, dayStr) {
+    /************************************************************
+     * Read mapping + rule tables once (pass as `tables` when
+     * categorizing many rows in one run).
+     ************************************************************/
+    loadTables(ss) {
+        return {
+            mapData: ss.getSheetByName("Settings_Mapping").getDataRange().getValues(),
+            ruleData: ss.getSheetByName("Settings_Rules").getDataRange().getValues()
+        };
+    },
+
+    getSmartCategory(ss, entity, amount, timeStr, dayStr, tables) {
         if (entity === "CC Bill Payment") return "CC Payment";
 
+        const t = tables || Categories.loadTables(ss);
+
         // 1. Keyword mapping — supports comma-separated keywords per row
-        const mapData = ss.getSheetByName("Settings_Mapping").getDataRange().getValues();
+        const mapData = t.mapData;
         for (let i = 1; i < mapData.length; i++) {
             const [keywordCell, category, days] = mapData[i];
             if (!keywordCell) continue;
@@ -18,7 +31,7 @@ const Categories = {
         }
 
         // 2. Time/amount rules
-        const ruleData = ss.getSheetByName("Settings_Rules").getDataRange().getValues();
+        const ruleData = t.ruleData;
         for (let i = 1; i < ruleData.length; i++) {
             const [, start, end, maxAmt, days, cat] = ruleData[i];
             if (!start) continue;

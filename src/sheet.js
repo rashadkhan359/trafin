@@ -305,7 +305,7 @@ const Sheet = {
 
     setupAccountsSheet(ss) {
         const HEADERS = ["Bank", "Account Type", "Initial Balance (₹)",
-            "Current Balance (₹)", "Currency", "Notes"];
+            "Current Balance (₹)", "Currency", "Notes", "Balance Check"];
         let sheet = ss.getSheetByName("Accounts");
         if (!sheet) {
             sheet = ss.insertSheet("Accounts");
@@ -327,13 +327,14 @@ const Sheet = {
 
     setupAccountsCCSheet(ss) {
         const HEADERS = ["Bank", "Card Name", "Last 4 Digits", "Credit Limit (₹)",
-            "Initial Outstanding (₹)", "Current Outstanding (₹)", "Available Limit (₹)", "Currency", "Notes"];
+            "Initial Outstanding (₹)", "Current Outstanding (₹)", "Available Limit (₹)", "Currency", "Notes",
+            "Statement Day (1-31)", "Due Day (1-31)", "Balance Check"];
         let sheet = ss.getSheetByName("Accounts_CC");
         if (!sheet) {
             sheet = ss.insertSheet("Accounts_CC");
             sheet.appendRow(HEADERS);
-            sheet.getRange("A1:I1").setFontWeight("bold").setBackground("#fce5cd");
-            sheet.appendRow(["Kotak", "Kotak Credit", "6971", 100000, 0, "", "", "INR", ""]);
+            sheet.getRange("A1:K1").setFontWeight("bold").setBackground("#fce5cd");
+            sheet.appendRow(["Kotak", "Kotak Credit", "6971", 100000, 0, "", "", "INR", "", "", ""]);
         } else {
             const current = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
             HEADERS.forEach((h, i) => {
@@ -342,7 +343,7 @@ const Sheet = {
                 }
             });
         }
-        sheet.setColumnWidths(1, 9, 170);
+        sheet.setColumnWidths(1, HEADERS.length, 170);
     },
 
     setupBudgetSheet(ss) {

@@ -1,3 +1,5 @@
 node_modules/
 .clasp.json
 .cursor/
+# one-off history import (contains personal SMS)
+src/_backfill.js

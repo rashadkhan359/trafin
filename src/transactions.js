@@ -8,15 +8,36 @@ const Transactions = {
     /************************************************************
      * DUPLICATE CHECK (CacheService, 6h TTL)
      ************************************************************/
-    isDuplicate(smsId) {
+    isDuplicate(smsId, ttlSeconds) {
         if (!smsId) return false;
 
         const cache = CacheService.getScriptCache();
         const existing = cache.get(smsId);
         if (existing) return true;
 
-        cache.put(smsId, "1", 21600);
+        cache.put(smsId, "1", ttlSeconds || 21600);
         return false;
+    },
+
+    /************************************************************
+     * CONTENT DUPLICATE CHECK (15 min window)
+     * Banks sometimes deliver the exact same SMS twice from two sender IDs
+     * (e.g. JK-KOTAKB-S and VK-KOTAKB-S), which the smsId|sender key cannot
+     * catch. Two genuine transactions never share an identical body because
+     * the UPI ref / available balance differs.
+     ************************************************************/
+    isDuplicateContent(rawSms) {
+        if (!rawSms) return false;
+
+        return Transactions.isDuplicate("body|" + Transactions.contentHash(rawSms), 900);
+    },
+
+    contentHash(rawSms) {
+        const digest = Utilities.computeDigest(
+            Utilities.DigestAlgorithm.MD5,
+            (rawSms || "").replace(/\s+/g, " ").trim()
+        );
+        return Utilities.base64Encode(digest);
     },
 
     /************************************************************

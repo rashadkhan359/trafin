@@ -18,7 +18,7 @@ const Webhook = {
             let data = {};
             if (e.postData && e.postData.contents) {
                 try {
-                    data = JSON.parse(e.postData.contents);
+                    data = JSON.parse(e.postData.contents) || {};
                 } catch (parseErr) {
                     Logger.log("Webhook: invalid JSON body — " + parseErr);
                     return Webhook.jsonResponse({
@@ -27,6 +27,11 @@ const Webhook = {
                     });
                 }
             }
+
+            // URL query parameters are merged in (body wins). App notifications are
+            // sent this way because their text can contain quotes / line breaks that
+            // would break a hand-built JSON body.
+            data = Object.assign({}, (e && e.parameter) || {}, data);
 
             const auth = Security.validateWebhookSecret(e, data);
             if (!auth.valid) {
@@ -41,6 +46,10 @@ const Webhook = {
             const tz = Config.getTimezone(ss);
             const now = new Date();
 
+            if (data.source === "notification") {
+                return Webhook.handleNotification(ss, data, now, tz);
+            }
+
             const rawSms = data.message || "";
             const sender = data.sender || "";
             const smsId = data.smsId || "";
@@ -48,11 +57,14 @@ const Webhook = {
             Logger.log("Webhook: received SMS | sender=" + sender + " | smsId=" + smsId
                 + " | message=" + rawSms.substring(0, 80));
 
-            // Dedup key includes sender so that a self-transfer (same UPI ref in
-            // both the debit bank's SMS and the credit bank's SMS) is NOT collapsed
-            // into a single entry — they have different senders and are two distinct
-            // transactions. Only a true re-delivery of the exact same SMS is skipped.
-            const dedupKey = smsId ? (smsId + "|" + sender) : "";
+            // Dedup key = smsId + sender + hash of the SMS text.
+            // The text hash is essential: if the forwarder sends a non-unique smsId
+            // (e.g. an unresolved placeholder like "[sms_sender]-[sms_date]"), a key
+            // without it makes every SMS look like a duplicate for 6 hours.
+            // Sender stays in the key so both sides of a self-transfer are kept.
+            const dedupKey = smsId
+                ? (smsId + "|" + sender + "|" + Transactions.contentHash(rawSms))
+                : "";
             if (dedupKey && Transactions.isDuplicate(dedupKey)) {
                 Logger.log("Webhook: duplicate dedupKey=" + dedupKey + " — skipping");
                 return Webhook.jsonResponse({ status: "duplicate" });
@@ -91,6 +103,13 @@ const Webhook = {
                 });
             }
 
+            // Same SMS body seen in the last 15 min (double delivery) — skip.
+            // Checked only for SMS that would be saved, so ignored promos don't fill the cache.
+            if (Transactions.isDuplicateContent(rawSms)) {
+                Logger.log("Webhook: duplicate SMS body — skipping");
+                return Webhook.jsonResponse({ status: "duplicate", reason: "same content" });
+            }
+
             // Low confidence: still write to sheet but highlight the row in orange
             // so the user can review rather than silently losing the transaction.
             const lowConfidence = parsed.confidence < 0.5;
@@ -108,15 +127,27 @@ const Webhook = {
                 ss, parsed.entity, parsed.amount, timeStr, dayStr
             );
 
-            Transactions.save(ss, {
-                now,
-                tz,
-                parsed,
-                category,
-                bankDisplayName,
-                rawSms,
-                lowConfidence
+            // If an app notification already recorded this payment a moment ago,
+            // upgrade that row with the SMS details instead of adding a second row.
+            const row = Transactions.buildRow({ now, parsed, category, bankDisplayName, rawSms });
+            const pair = Pairing.claim(ss, tz, {
+                source: "sms", rank: 3, type: parsed.type, amount: parsed.amount,
+                raw: rawSms, row, now
             });
+
+            if (pair.action === "new") {
+                Transactions.save(ss, {
+                    now,
+                    tz,
+                    parsed,
+                    category,
+                    bankDisplayName,
+                    rawSms,
+                    lowConfidence
+                });
+            }
+
+            BalanceCheck.afterSms(ss, tz, now, rawSms, bankDisplayName);
 
             Webhook.checkRecurringMatch(ss, now, parsed.amount, parsed.entity, category);
 
@@ -140,6 +171,70 @@ const Webhook = {
         } finally {
             if (lockAcquired) lock.releaseLock();
         }
+    },
+
+    /************************************************************
+     * HANDLE APP NOTIFICATION (GPay, PhonePe, Paytm, CRED, bank apps)
+     * Every forwarded notification is logged to Notification_Log with
+     * the decision, so rules can be tuned from real data.
+     ************************************************************/
+    handleNotification(ss, data, now, tz) {
+        // A placeholder the forwarder could not fill arrives as literal "{name}" / "[name]"
+        const clean = v => {
+            const t = (v === null || v === undefined ? "" : v).toString().trim();
+            return /^[\[{][\w]+[\]}]$/.test(t) ? "" : t;
+        };
+        const app = clean(data.app);
+        const title = clean(data.title);
+        // prefer the expanded ("big") text when the app provides one
+        const text = clean(data.big) || clean(data.message) || clean(data.text);
+
+        const finish = (result, extra) => {
+            Webhook.logNotification(ss, now, app, title, text, result);
+            return Webhook.jsonResponse(Object.assign({ status: result }, extra || {}));
+        };
+
+        const parsed = Parser.parseNotification(app, title, text);
+        if (!parsed) return finish("ignored: empty");
+        if (parsed.ignored) return finish("ignored: promo/reminder");
+        if (!parsed.amount || parsed.type === "Unknown") return finish("ignored: not a payment");
+
+        const bankDisplayName = Main.resolveAccountDisplayName(ss, parsed.bank);
+        const category = Categories.getSmartCategory(
+            ss, parsed.entity, parsed.amount,
+            Utilities.formatDate(now, tz, "HH:mm"), Utilities.formatDate(now, tz, "EEE")
+        );
+        const row = Transactions.buildRow({
+            now, parsed, category, bankDisplayName, rawSms: parsed.rawSms
+        });
+
+        const pair = Pairing.claim(ss, tz, {
+            source: "notif:" + app,
+            rank: bankDisplayName !== "Other" ? 2 : 1,
+            type: parsed.type, amount: parsed.amount,
+            raw: parsed.rawSms, row, now
+        });
+
+        if (pair.action === "new") {
+            Transactions.save(ss, {
+                now, tz, parsed, category, bankDisplayName,
+                rawSms: parsed.rawSms, lowConfidence: false
+            });
+            Webhook.checkRecurringMatch(ss, now, parsed.amount, parsed.entity, category);
+            return finish("saved", { type: parsed.type, amount: parsed.amount });
+        }
+        return finish(pair.action === "upgraded"
+            ? "merged: improved existing row" : "duplicate: already recorded");
+    },
+
+    logNotification(ss, now, app, title, text, result) {
+        let sheet = ss.getSheetByName("Notification_Log");
+        if (!sheet) {
+            sheet = ss.insertSheet("Notification_Log");
+            sheet.appendRow(["Timestamp", "App", "Title", "Text", "Result"]);
+            sheet.getRange("A1:E1").setFontWeight("bold");
+        }
+        sheet.appendRow([now, app, title, text, result]);
     },
 
     checkRecurringMatch(ss, txDate, amount, entity, category) {

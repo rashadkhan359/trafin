@@ -55,11 +55,12 @@ const DataGuard = {
                 "Account", "Category", "Status", "Notes"]);
         DataGuard.verifySettingsSheet(ss, "Accounts",
             ["Bank", "Account Type", "Initial Balance (₹)",
-                "Current Balance (₹)", "Currency", "Notes"]);
+                "Current Balance (₹)", "Currency", "Notes", "Balance Check"]);
         DataGuard.verifySettingsSheet(ss, "Accounts_CC",
             ["Bank", "Card Name", "Last 4 Digits", "Credit Limit (₹)",
                 "Initial Outstanding (₹)", "Current Outstanding (₹)",
-                "Available Limit (₹)", "Currency", "Notes"]);
+                "Available Limit (₹)", "Currency", "Notes",
+                "Statement Day (1-31)", "Due Day (1-31)", "Balance Check"]);
         Logger.log("DataGuard: Verification complete.");
     }
 };

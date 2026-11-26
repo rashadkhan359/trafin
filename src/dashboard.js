@@ -111,22 +111,34 @@ const Dashboard = {
         }
         row++;
 
-        dash.getRange(row, 1, 1, 3)
-            .setValues([["💳 CREDIT CARDS", "", ""]])
+        dash.getRange(row, 1, 1, 5)
+            .setValues([["💳 CREDIT CARDS", "", "", "", ""]])
             .setFontWeight("bold").setFontSize(11).setBackground("#cc0000").setFontColor("white");
         row++;
-        dash.getRange(row, 1, 1, 3)
-            .setValues([["Card", "Outstanding", "Available Limit"]])
+        dash.getRange(row, 1, 1, 5)
+            .setValues([["Card", "Outstanding", "Available Limit", "Next Bill", "Pay By"]])
             .setFontWeight("bold").setBackground("#f4cccc");
         row++;
 
+        // Adds the Statement Day / Due Day columns on older sheets (no data is changed)
+        Sheet.setupAccountsCCSheet(ss);
+
         const ccSheet = ss.getSheetByName("Accounts_CC");
         if (ccSheet && ccSheet.getLastRow() > 1) {
-            ccSheet.getRange(2, 1, ccSheet.getLastRow() - 1, 7).getValues()
-                .forEach(([, cardName, last4, , , outstanding, available]) => {
+            const today = Utilities.formatDate(now, tz, "yyyy-M-d").split("-").map(Number);
+            ccSheet.getRange(2, 1, ccSheet.getLastRow() - 1, 11).getValues()
+                .forEach(([, cardName, last4, , , outstanding, available, , , stmtDay, dueDay]) => {
                     if (!cardName) return;
-                    dash.getRange(row, 1, 1, 3)
-                        .setValues([[`${cardName} (...${last4})`, outstanding, available]]);
+                    const bill = Dashboard.nextDayOfMonth(today, stmtDay);
+                    const due = Dashboard.nextDayOfMonth(today, dueDay);
+                    dash.getRange(row, 1, 1, 5).setValues([[
+                        `${cardName} (...${last4})`, outstanding, available,
+                        bill ? bill.label : "set Statement Day",
+                        due ? `${due.label} (${due.daysLeft} days left)` : "set Due Day"
+                    ]]);
+                    if (due && Number(outstanding) > 0 && due.daysLeft <= 5) {
+                        dash.getRange(row, 5).setBackground("#fff2f2").setFontWeight("bold");
+                    }
                     row++;
                 });
         }
@@ -156,9 +168,36 @@ const Dashboard = {
         dash.setColumnWidth(1, 230);
         dash.setColumnWidth(2, 130);
         dash.setColumnWidth(3, 130);
-        dash.setColumnWidth(4, 100);
+        dash.setColumnWidth(4, 130);
+        dash.setColumnWidth(5, 200);
 
         Main.alert("✅ Dashboard updated!");
+    },
+
+    /************************************************************
+     * Next date that falls on `day` of a month, counted from today.
+     * today = [year, month(1-12), day]. Days past month end clamp to
+     * the last day (e.g. 31 in a 30-day month). Returns null if unset.
+     ************************************************************/
+    nextDayOfMonth(today, day) {
+        const d = Number(day);
+        if (!d || d < 1 || d > 31) return null;
+
+        const [y, m, t] = today;
+        const pick = (year, monthIndex) => {
+            const last = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+            return new Date(Date.UTC(year, monthIndex, Math.min(d, last)));
+        };
+        const start = new Date(Date.UTC(y, m - 1, t));
+        let target = pick(y, m - 1);
+        if (target < start) target = pick(y, m);
+
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        return {
+            label: target.getUTCDate() + " " + months[target.getUTCMonth()],
+            daysLeft: Math.round((target - start) / 86400000)
+        };
     },
 
     updateBudgetSpent(ss, curSheet, budgetSheet) {

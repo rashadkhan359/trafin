@@ -5,6 +5,8 @@
  * NEVER overwrites user-entered values except in formula-driven columns
  * (Accounts col D, Accounts_CC cols F+G). All structural changes are incremental.
  * Safe to re-run initializeProject() at any time.
+ * Exception: the menu action "Clean Up Transactions" (cleanup.js) MOVES junk and
+ * duplicate rows to the Removed_SMS sheet — only when the user confirms.
  ************************************************************/
 
 const Main = {
@@ -39,9 +41,19 @@ const Main = {
         );
     },
 
-    resolveAccountDisplayName(ss, parserId) {
-        const match = Config.getAccountsList(ss).find(a => a.parserId === parserId);
-        return match ? match.displayName : "Other";
+    resolveAccountDisplayName(ss, parserId, accountsList) {
+        const accounts = accountsList || Config.getAccountsList(ss);
+        const match = accounts.find(a => a.parserId === parserId);
+        if (match) return match.displayName;
+
+        // Card number not listed (replaced card, or SMS without the last 4 digits):
+        // if that bank has exactly one card in Accounts_CC, it must be that one.
+        const cc = /^(.+)_CC_/.exec(parserId || "");
+        if (cc) {
+            const cards = accounts.filter(a => a.parserId.indexOf(cc[1] + "_CC_") === 0);
+            if (cards.length === 1) return cards[0].displayName;
+        }
+        return "Other";
     },
 
     refreshAccountBalances() {
@@ -111,9 +123,76 @@ const Main = {
                 `SUMIFS('${n}'!C:C,'${n}'!G:G,"${displayName}",'${n}'!B:B,"CC_Payment")`
             ).join("+");
 
-            sheet.getRange(r, 6).setFormula(`=E${r}+(${spendTerms})-(${paymentTerms})`);
+            // Refunds arrive as Type "Credit" against the card and reduce what is owed.
+            const refundTerms = txSheets.map(n =>
+                `SUMIFS('${n}'!C:C,'${n}'!G:G,"${displayName}",'${n}'!B:B,"Credit")`
+            ).join("+");
+
+            sheet.getRange(r, 6).setFormula(`=E${r}+(${spendTerms})-(${paymentTerms})-(${refundTerms})`);
             sheet.getRange(r, 7).setFormula(`=D${r}-F${r}`);
         }
+    },
+
+    /************************************************************
+     * RECONCILE — ask for the real balance of each account / card and
+     * adjust the Initial Balance (or Initial Outstanding) so the computed
+     * current figure matches. Transactions are not changed.
+     ************************************************************/
+    reconcileBalances() {
+        const ss = SpreadsheetApp.getActiveSpreadsheet();
+        const ui = SpreadsheetApp.getUi();
+
+        Main.refreshAccountBalances();
+        Main.refreshCCBalances();
+        SpreadsheetApp.flush();
+
+        const targets = [
+            { sheetName: "Accounts",    initialCol: 3, currentCol: 4, what: "balance",
+              label: row => `${row[0]} ${row[1]}`.trim() },
+            { sheetName: "Accounts_CC", initialCol: 5, currentCol: 6, what: "outstanding (amount owed)",
+              label: row => `${row[1]} (...${row[2]})` }
+        ];
+
+        const changes = [];
+
+        for (const t of targets) {
+            const sheet = ss.getSheetByName(t.sheetName);
+            if (!sheet || sheet.getLastRow() < 2) continue;
+
+            const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, t.currentCol).getValues();
+            for (let i = 0; i < rows.length; i++) {
+                if (!rows[i][0]) continue;
+
+                const name = t.label(rows[i]);
+                const initial = Number(rows[i][t.initialCol - 1]) || 0;
+                const current = Number(rows[i][t.currentCol - 1]) || 0;
+
+                const res = ui.prompt(
+                    "Reconcile — " + name,
+                    "Sheet shows " + t.what + ": " + current.toFixed(2) + "\n\n" +
+                    "Enter the real " + t.what + " right now.\n" +
+                    "Leave blank to skip this one.",
+                    ui.ButtonSet.OK_CANCEL
+                );
+                if (res.getSelectedButton() !== ui.Button.OK) return;
+
+                const text = res.getResponseText().replace(/[₹,\s]/g, "");
+                if (!text) continue;
+                const actual = Number(text);
+                if (isNaN(actual)) {
+                    ui.alert("'" + res.getResponseText() + "' is not a number — skipped " + name + ".");
+                    continue;
+                }
+
+                const newInitial = Math.round((initial + (actual - current)) * 100) / 100;
+                sheet.getRange(i + 2, t.initialCol).setValue(newInitial);
+                changes.push(name + ": " + current.toFixed(2) + " → " + actual.toFixed(2));
+            }
+        }
+
+        Main.alert(changes.length
+            ? "Balances reconciled:\n\n" + changes.join("\n")
+            : "Nothing changed.");
     },
 
     resetRecurringStatus() {
@@ -157,16 +236,22 @@ const Main = {
 
     onOpen() {
         try {
-            SpreadsheetApp.getUi()
+            const menu = SpreadsheetApp.getUi()
                 .createMenu("TraFin")
                 .addItem("Update Dashboard",             "updateGlobalDashboard")
                 .addItem("Format Current Sheet",         "applyFormatting")
                 .addItem("Sync Dropdowns & Balances",    "syncSettingsAndDropdowns")
                 .addItem("Refresh Account Balances",     "refreshAccountBalances")
                 .addItem("Refresh CC Balances",          "refreshCCBalances")
+                .addItem("Reconcile Balances (enter real balances)", "reconcileBalances")
                 .addItem("Reset Recurring (New Month)",  "resetRecurringStatus")
-                .addItem("Re-run Initialization",        "initializeProject")
-                .addToUi();
+                .addItem("Clean Up Transactions (junk SMS, unknown entities)", "cleanUpTransactions")
+                .addItem("Re-run Initialization",        "initializeProject");
+            // Present only while a one-off history import file is loaded in the project
+            if (typeof importMissingTransactions === "function") {
+                menu.addItem("Import Missing Transactions (one-off)", "importMissingTransactions");
+            }
+            menu.addToUi();
         } catch (e) {
             Logger.log("onOpen UI unavailable: " + e);
         }

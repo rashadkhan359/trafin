@@ -20,7 +20,7 @@ const Parser = {
 
     const sms = Parser.normalizeSms(rawSms);
 
-    if (Parser.shouldIgnoreSms(sms)) {
+    if (Parser.shouldIgnoreSms(sms, sender)) {
 
       return {
         ignored: true,
@@ -94,11 +94,144 @@ const Parser = {
   },
 
   /************************************************************
+   * PARSE APP NOTIFICATION (GPay, PhonePe, Paytm, CRED, wallet, bank apps)
+   * Stricter than SMS: must have an amount and an explicit
+   * "money moved" phrase, otherwise it is only logged.
+   ************************************************************/
+  parseNotification(app, title, text) {
+    const raw = [title || "", text || ""].join(". ").replace(/\s+/g, " ").trim();
+    if (!raw || raw === ".") return null;
+
+    const sms = Parser.normalizeSms(raw);
+    const lower = raw.toLowerCase();
+
+    const promo = /\b(loan|emi starts|reminder|requested|request(ing)? money|pending|failed|failure|declined|expired?|expiring|win |won |reward|scratch|coupon|voucher|upto|up to|invite|refer|due on|is due|bill generated|statement)\b/i;
+    if (Parser.shouldIgnoreSms(sms, "") || promo.test(lower)) {
+      return { ignored: true, reason: "Not a payment notification" };
+    }
+
+    const amountMatch = raw.match(/(?:₹|Rs\.?|INR)\s*([\d,]+(?:\.\d+)?)/i);
+    const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, "")) : null;
+
+    let type = "Unknown";
+    let entity = "Unknown";
+    let m;
+
+    if (/\b(paid|sent) you\b|\breceived\b|\bcredited\b|\brefund(ed)?\b|\bmoney received\b/i.test(raw)) {
+      type = "Credit";
+      m = raw.match(/([A-Za-z][\w .&'-]{1,40}?) (?:has )?(?:paid|sent) you\b/i) ||
+        raw.match(/\bfrom ([^.₹]+?)(?: on\b| via\b| in\b| to your\b|\.|$)/i);
+    } else if (/\byou (?:have )?(?:paid|sent)\b|\bpaid to\b|\bsent to\b|\bdebited\b|\bspent\b|\bpaid successfully\b|\b(?:payment|recharge|transfer|transaction|purchase)\b.{0,80}\b(?:successful|success|completed|done)\b|\bsuccessfully (?:paid|sent)\b/i.test(raw)) {
+      type = "Debit";
+      // "Recharge of Delhi Metro Smart Card 123 for Rs. 200 was successful"
+      m = raw.match(/\b(?:recharge|payment|purchase) (?:of|for) ([^.₹]+?) (?:for|of) (?:₹|Rs\.?|INR)/i) ||
+        raw.match(/\b(?:paid|sent)(?: (?:₹|Rs\.?|INR)\s*[\d,.]+)? to ([^.₹]+?)(?: on\b| via\b| using\b| from\b| for\b|\.|$)/i) ||
+        raw.match(/\bto ([^.₹]+?)(?: on\b| via\b| using\b| from\b| was\b| is\b|\.|$)/i) ||
+        raw.match(/\bat ([^.₹]+?)(?: on\b| via\b| using\b|\.|$)/i) ||
+        raw.match(/\b(?:recharge|payment|purchase) (?:of|for) ([^.₹]+?)(?: for\b| of\b| was\b| is\b|\.|$)/i);
+    }
+    if (m) entity = Parser.cleanEntity(m[1]);
+
+    // Account is only known when the notifying app is the bank itself
+    // (text like "Sent using Paytm UPI" describes the other party, not your account).
+    let bank = Parser.detectBankFromSmsText((app || "").toLowerCase());
+    const card = raw.match(/credit card\s*[xX*-]*(\d{4})/i);
+
+    // CRED / bank app: "payment of ₹X on your ... credit card XXXX-2993 has been processed"
+    if (card && /payment of .* credit card .*(processed|successful|received)|paid instantly to/i.test(raw)) {
+      type = "CC_Payment";
+      entity = "CC Bill Payment";
+    }
+    // Kotak app: "₹349 paid successfully. Amount spent from credit card XX2993."
+    else if (card && type === "Debit" && entity === "Unknown") {
+      entity = "Card Spend";
+    }
+    if (card) {
+      const issuer = bank !== "Unknown" ? bank : Parser.detectBankFromSmsText(sms);
+      if (issuer !== "Unknown") bank = issuer + "_CC_" + card[1];
+    }
+    // CRED: "X sent you ₹2,000. Bank of India account has been successfully credited."
+    if (bank === "Unknown") {
+      const acct = raw.match(/([A-Za-z][A-Za-z ]+?) account has been (?:successfully )?(?:credited|debited)/i);
+      if (acct) bank = Parser.detectBankFromSmsText(acct[1].toLowerCase());
+    }
+
+    return {
+      ignored: false,
+      rawSms: "[" + (app || "App") + "] " + raw,
+      normalizedSms: sms,
+      sender: app || "",
+      type,
+      amount,
+      entity,
+      bank,
+      account: "",
+      reference: Parser.extractReference(sms),
+      confidence: 0.6,
+      category: Parser.autoCategorize(entity, type),
+      labels: ["via " + (app || "app")],
+      parsedAt: new Date()
+    };
+  },
+
+  /************************************************************
+   * BALANCE STATED BY THE BANK IN THE SMS
+   * Returns { kind: "balance" | "limit", value } or null.
+   ************************************************************/
+  extractStatedBalance(rawSms) {
+    const num = m => parseFloat(m[1].replace(/,/g, ""));
+    let m = (rawSms || "").match(/Avl\.?\s*Bal(?:ance)?\.?\s*(?:is)?\s*:?\s*(?:INR|Rs\.?)?\s*([\d,]+(?:\.\d+)?)/i);
+    if (m) return { kind: "balance", value: num(m) };
+    m = (rawSms || "").match(/(?:Avl\.?|Available)\s*(?:Credit\s*)?limit\s*(?:is)?\s*:?\s*(?:INR|Rs\.?)?\s*([\d,]+(?:\.\d+)?)/i);
+    if (m) return { kind: "limit", value: num(m) };
+    return null;
+  },
+
+  /************************************************************
    * LEGACY ORDERED TXN PATTERNS (parity with monolithic Code.js)
    * Most specific first; returns null to fall through to generic heuristics.
    ************************************************************/
   matchLegacyTxn(rawSms, normalizedSms) {
     const lower = normalizedSms.toLowerCase();
+
+    // CC refund: "INR X from MERCHANT refunded to your Kotak Credit Card xNNNN"
+    if (/refunded to\b.*credit card/i.test(rawSms)) {
+      const m = rawSms.match(/from\s+(.+?)\s+refunded/i);
+      return {
+        type: "Credit",
+        entity: (m ? m[1].trim() + " " : "") + "Refund"
+      };
+    }
+
+    // UPI reversal: "... is reversed for Rs.X (UPI Ref no ...)"
+    if (/\bis reversed for\b/i.test(rawSms)) {
+      return { type: "Credit", entity: "Reversal" };
+    }
+
+    // Card auto-pay: "Auto-Pay ID of INR X to MERCHANT debited via Kotak Card xNNNN"
+    if (/auto-?pay\b.*\bdebited via\b/i.test(rawSms)) {
+      const m = rawSms.match(/\bto\s+(.+?)\s+debited via/i);
+      return { type: "Debit", entity: m ? m[1].trim() : "Auto-Pay" };
+    }
+
+    // Debit/credit card spend without "credit card" wording:
+    // "Rs.X spent via Kotak Debit Card XXNNNN at MERCHANT on DATE"
+    if (/\bspent (?:via|on|using)\b/i.test(rawSms) && !/credit card/i.test(rawSms)) {
+      const m = rawSms.match(/\bat\s+(.+?)\s+on\s+\d/i) ||
+        rawSms.match(/\bat\s+(.+?)\./i);
+      return { type: "Debit", entity: m ? m[1].trim() : "Card Spend" };
+    }
+
+    // Incoming transfer with no payer (salary / NEFT):
+    // "Rs: X has been transferred to your account XXXXXXNNNN on DATE"
+    if (/has been transferred to your account/i.test(rawSms)) {
+      return { type: "Credit", entity: "Account Transfer" };
+    }
+
+    // Bank charges: "BOI - Rs X Debited(TRF) SMSChrgsJUL-SEP26 GST ..."
+    if (/debited\(trf\)\s*\S*chrg/i.test(rawSms)) {
+      return { type: "Debit", entity: "Bank Charges" };
+    }
 
     // CC spend: "INR X spent on Kotak Credit Card xNNNN at MERCHANT."
     if (/\bspent on\b.*credit card/i.test(rawSms) ||
@@ -124,7 +257,8 @@ const Parser = {
     // The VPA may be glued to "to" with no space (e.g. "topaytm.s25fvw3@pty"),
     // so try with-space first, then fall back to no-space.
     if (lower.includes("sent") && /from\s+kotak\s+bank/i.test(rawSms)) {
-      const m = rawSms.match(/to\s+([\w.@-]+)\s+on/i)
+      const m = rawSms.match(/\bto\s+(.+?)\s+on\s+\d/i)
+             || rawSms.match(/to\s+([\w.@-]+)\s+on/i)
              || rawSms.match(/to([\w.@-]+)\s+on/i);
       return {
         type: "Debit",
@@ -213,34 +347,72 @@ const Parser = {
    ************************************************************/
   shouldIgnoreSms(sms, sender) {
     const lower = sms.toLowerCase();
-  
-    // Hard ignore — these never contain real transactions
+
+    // Indian sender IDs end in -P for promotional traffic (e.g. "JD-KOTAKB-P").
+    // Real transaction alerts come from -S / -T senders, never -P.
+    if (/-P$/i.test((sender || "").trim())) return true;
+
+    // Hard ignore — these never contain real transactions.
+    // NOTE: sms is normalized, so "-" is already a space ("auto-pay" => "auto pay").
     const hardIgnore = [
       "otp",
       "one time password",
       "reward point",
       "loan offer",
-      "pre-approved",
       "pre approved",
       "emi due",
       "minimum due",
+      "min due",
+      "total due",
       "statement generated",
+      "statement for",
       "kyc",
       "insurance offer",
       "voucher",
-      "available credit limit",
       "is due on",
       "is due for payment",
       "ignore if already paid",
+      "ignore if paid",
       "please ignore if",
       "special gift",
       "every year",
       "postpaid plan",
-      "passbook balance",       // catches the provident fund SMS
-      "contribution of",        // catches the provident fund SMS
+      "passbook balance",       // provident fund SMS
+      "contribution of",        // provident fund SMS
+
+      // Marketing
+      "t&c",
+      "apply now",
+      "apply:",
+      "offer",
+      "cashback",
+      "recharge now",
+      "earn points",
+      "points on purchase",
+      "thank you for shopping",
+      "choose your emi",
+
+      // Failed / not-yet-happened / non-monetary notifications
+      "could not be approved",
+      "unsuccessful",
+      "declined",
+      "will be debited",
+      "will be credited",
+      "mandate",
+      "auto pay activated",
+      "autopay activated",
+      "your request",
+      "access request",
+      "initiated a refund",     // the real refund SMS follows from the bank
+
+      // Mutual fund confirmations — the bank debit SMS is the real record
+      "folio"
     ];
-  
+
     if (hardIgnore.some(k => lower.includes(k))) return true;
+
+    // "earn 3 pts on every Rs 100 spent" style promos
+    if (/\bearn\b.*\b(pts|points|rewards?)\b/i.test(lower)) return true;
 
     // "dear customer" only ignore if no debit/credit verb present
     if (lower.includes("dear customer")) {
@@ -248,12 +420,14 @@ const Parser = {
       if (!hasTxnVerb) return true;
     }
 
-    // "credit limit" — ignore if no transaction verb
+    // "credit limit" — ignore unless it is a spend or a card bill payment
+    // ("Payment of INR X is credited to your ... Credit Card ... Available Credit limit is ...")
     if (lower.includes("credit limit") &&
-        !/(debited|spent|sent)\b/i.test(lower)) {
+        !/(debited|spent|sent)\b/i.test(lower) &&
+        !/credited to your.*credit card/i.test(lower)) {
       return true;
     }
-  
+
     return false;
   },
 
@@ -387,6 +561,14 @@ const Parser = {
   cleanEntity(entity) {
     if (!entity) return "Unknown";
 
+    // UPI IDs whose handle is a phone number or machine id ("9876543210@axl",
+    // "Q123456789@ybl", "paytm-12345678@ptybl") carry no readable name — keep the
+    // full VPA so the row stays identifiable and Settings_Mapping can match it.
+    const vpa = entity.toString().trim().match(/^([\w.\-]+)@([\w.]+?)\.?$/);
+    if (vpa && (/\d{5,}/.test(vpa[1]) || vpa[1].length < 3)) {
+      return (vpa[1] + "@" + vpa[2]).toLowerCase();
+    }
+
     return entity
       .toString()
       .split("@")[0]
@@ -451,7 +633,8 @@ const Parser = {
     if (rawSms.includes("-BOI") || /\bBOI\b/.test(rawSms)) {
       return "BOI";
     }
-    if (/kotak.*credit card|credit card.*kotak/i.test(rawSms)) {
+    if (/kotak.*credit card|credit card.*kotak/i.test(rawSms) ||
+        /\bkotak card\s*x+\d{4}/i.test(rawSms)) {
       return "Kotak_CC_" + Parser.extractLast4(rawSms);
     }
     if (/\bKotak\b/i.test(rawSms)) {
