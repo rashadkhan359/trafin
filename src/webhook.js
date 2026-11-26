@@ -189,6 +189,11 @@ const Webhook = {
         // prefer the expanded ("big") text when the app provides one
         const text = clean(data.big) || clean(data.message) || clean(data.text);
 
+        // Optional original time (epoch ms) — used when replaying old notifications
+        const ts = Number(data.ts);
+        const historical = !!ts && !isNaN(ts) && Math.abs(now.getTime() - ts) > 15 * 60 * 1000;
+        if (historical) now = new Date(ts);
+
         const finish = (result, extra) => {
             Webhook.logNotification(ss, now, app, title, text, result);
             return Webhook.jsonResponse(Object.assign({ status: result }, extra || {}));
@@ -208,18 +213,29 @@ const Webhook = {
             now, parsed, category, bankDisplayName, rawSms: parsed.rawSms
         });
 
-        const pair = Pairing.claim(ss, tz, {
+        const report = {
             source: "notif:" + app,
             rank: bankDisplayName !== "Other" ? 2 : 1,
             type: parsed.type, amount: parsed.amount,
             raw: parsed.rawSms, row, now
-        });
+        };
+        const pair = historical
+            ? Pairing.claimHistorical(ss, tz, report, bankDisplayName)
+            : Pairing.claim(ss, tz, report);
 
         if (pair.action === "new") {
-            Transactions.save(ss, {
+            const saved = Transactions.save(ss, {
                 now, tz, parsed, category, bankDisplayName,
                 rawSms: parsed.rawSms, lowConfidence: false
             });
+            if (historical) {
+                // keep the month tab in date order
+                const last = saved.sheet.getLastRow();
+                if (last > 6) {
+                    saved.sheet.getRange(6, 1, last - 5, TxSchema.HEADERS.length)
+                        .sort({ column: 1, ascending: true });
+                }
+            }
             Webhook.checkRecurringMatch(ss, now, parsed.amount, parsed.entity, category);
             return finish("saved", { type: parsed.type, amount: parsed.amount });
         }

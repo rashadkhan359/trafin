@@ -55,6 +55,44 @@ const Pairing = {
     },
 
     /************************************************************
+     * HISTORICAL REPORT (replaying an old notification with its
+     * original time). The cache no longer knows that period, so look
+     * in the sheet instead: a row with the same type and amount within
+     * 20 minutes, not already claimed by this source and not booked to
+     * a different known account, is the same payment.
+     * Returns { action: "duplicate" } or { action: "new" }.
+     ************************************************************/
+    claimHistorical(ss, tz, report, bankDisplayName) {
+        const cache = CacheService.getScriptCache();
+        const sheetName = "Transactions_" + Utilities.formatDate(report.now, tz, "MMM_yyyy");
+        const sheet = ss.getSheetByName(sheetName);
+        if (!sheet || sheet.getLastRow() < 6) return { action: "new" };
+
+        const width = TxSchema.HEADERS.length;
+        const values = sheet.getRange(6, 1, sheet.getLastRow() - 5, width).getValues();
+        const t = report.now.getTime();
+
+        for (let i = 0; i < values.length; i++) {
+            const row = values[i];
+            if (!(row[0] instanceof Date)) continue;
+            if (Math.abs(row[0].getTime() - t) > 20 * 60 * 1000) continue;
+            if (row[1] !== report.type) continue;
+            if (Math.abs(Number(row[2]) - Number(report.amount)) > 0.005) continue;
+
+            const rowBank = (row[6] || "").toString();
+            if (bankDisplayName !== "Other" && rowBank && rowBank !== "Other" &&
+                rowBank !== bankDisplayName) continue;
+
+            const claimKey = "hist|" + sheetName + "|" + row[0].getTime() + "|" +
+                Number(row[2]).toFixed(2) + "|" + report.source;
+            if (cache.get(claimKey)) continue; // this source already matched that row
+            cache.put(claimKey, "1", 21600);
+            return { action: "duplicate" };
+        }
+        return { action: "new" };
+    },
+
+    /************************************************************
      * Overwrite the row whose Raw SMS equals oldRaw (searching the last
      * 80 rows). Keeps the original timestamp. Returns true if found.
      ************************************************************/
