@@ -100,9 +100,16 @@ This creates sheets such as:
 
 ### Credit cards (`Accounts_CC` sheet)
 
-| Bank | Card Name | Last 4 Digits | Credit Limit |
-|------|-----------|---------------|--------------|
-| Kotak | Kotak Credit | 6971 | 100000 |
+| Bank | Card Name | Last 4 Digits | Credit Limit | Initial Outstanding | Statement Day | Due Day |
+|------|-----------|---------------|--------------|---------------------|---------------|---------|
+| Kotak | Kotak Credit | 1234 | 100000 | what you owe today | 5 | 23 |
+
+- **Last 4 Digits** must match the card number shown in the bank SMS (`...Credit Card x1234`).
+- **Statement Day** = day of the month the bill is generated. **Due Day** = last day to pay. The Dashboard shows "Next Bill" and "Pay By (N days left)" from these.
+- **Card replaced by the bank?** Just change **Last 4 Digits** to the new number, then run **TraFin → Sync Dropdowns & Balances** and **TraFin → Clean Up Transactions** (relabels old rows to the new card).
+- If a bank has exactly one card listed, SMS for an unlisted card number of that bank are booked to it automatically.
+
+The `Statement Day`, `Due Day` and `Balance Check` columns are added the first time you run **TraFin → Update Dashboard** on an older sheet.
 
 After editing, dropdowns and balance formulas refresh automatically.
 
@@ -285,44 +292,35 @@ MacroDroid will offer variables for this trigger, including:
 
 ### F) JSON body and secret
 
-**Minimum example** (secret + SMS text):
+In the HTTP Request action open the **Content Body** tab, set **Content type** to `application/json`, choose **Text**, and paste:
 
 ```json
-{
-  "secret": "YOUR_WEBHOOK_SECRET_FROM_STEP_6",
-  "message": "{sms_message}"
-}
+{"sender":"{sms_number}","message":"[sms_message]","secret":"YOUR_WEBHOOK_SECRET_FROM_STEP_6"}
 ```
 
-**Recommended example** (better bank detection and fewer duplicates):
+Replace `YOUR_WEBHOOK_SECRET_FROM_STEP_6` with the real secret from step 6.
 
-```json
-{
-  "secret": "YOUR_WEBHOOK_SECRET_FROM_STEP_6",
-  "message": "{sms_message}",
-  "sender": "{sms_number}",
-  "smsId": "{sms_number}-{sms_date}"
-}
-```
+| Field | Value | Why |
+|-------|-------|-----|
+| `sender` | `{sms_number}` | The bank's sender id (e.g. `JD-KOTAKB-S`). Used for bank detection and to drop promotional senders (ids ending `-P`). |
+| `message` | `[sms_message]` | Full SMS text. |
+| `secret` | your secret | Required, or the webhook answers `unauthorized`. |
+| `smsId` | *(leave out)* | Optional. Only add it if you can make it unique per SMS. |
 
-Replace `YOUR_WEBHOOK_SECRET_FROM_STEP_6` with the real secret from step 6.  
-Do **not** leave the word `YOUR_WEBHOOK_SECRET` in place.
+> **Do not type variable names by hand.** `[sms_sender]`, `[trigger_guid]` and similar look plausible but are **not** filled in by MacroDroid — they arrive as literal text. A fixed `smsId` such as `[trigger_guid]` used to make TraFin drop most SMS as "duplicates". Current versions are immune (the SMS text is part of the duplicate check), but a wrong `sender` still loses bank detection.
 
 ---
 
-### G) Insert the SMS text dynamically (important)
+### G) Insert variables with the magic-text picker (important)
 
-Do **not** type the SMS by hand. Use MacroDroid **magic text** so `{sms_message}` is filled in when the SMS arrives.
+1. Tap inside the **Content Body** field where the value should go.
+2. Tap the **`...`** (Insert magic text) button next to the field.
+3. Pick **Incoming SMS number** → MacroDroid inserts `{sms_number}`.
+4. Pick **Incoming SMS message** → MacroDroid inserts the message variable.
 
-1. In the **HTTP Request** action, tap the **Content Body** field.
-2. Tap the **magic text** button (often `{...}` or a wand icon on the keyboard bar).
-3. Choose the **SMS Received** trigger variables.
-4. Tap **sms_message** (may show as `{sms_message}`).
-5. MacroDroid inserts it into your JSON where the cursor was.  
-   Your line should look like: `"message": "{sms_message}"`  
-   (MacroDroid also accepts `[sms_message]` in many versions; `{sms_message}` is preferred.)
+How to check it worked: after a bank SMS arrives, the `Unknown_SMS` / `Notification_Log` tabs and the Apps Script **Executions** log must show a real sender such as `JD-KOTAKB-S`, never `[sms_sender]`.
 
-Repeat for `{sms_number}` and `{sms_date}` if you use the recommended JSON.
+> **One macro only.** If you duplicated the macro while experimenting, disable the copy — two macros with the same trigger send every SMS twice.
 
 > **Screenshot placeholder:** Magic text picker for sms_message  
 > `docs/images/macrodroid-magic-text.png`
@@ -338,6 +336,56 @@ Repeat for `{sms_number}` and `{sms_date}` if you use the recommended JSON.
 
 > **Screenshot placeholder:** Successful test / new sheet row  
 > `docs/images/macrodroid-test-success.png`
+
+---
+
+### I) Second macro — payment app notifications (recommended)
+
+Banks do not send an SMS for every transaction. A second macro forwards the **notifications** of your payment and bank apps, which often arrive even when no SMS does (for example money received into an account, or a metro-card recharge in Paytm).
+
+**1. Give MacroDroid notification access**  
+Android **Settings → Apps → Special access → Notification access** (on Samsung: *Device and app notifications*) → allow **MacroDroid**.
+
+**2. Create a macro** named `TraFin Notifications`.
+
+**3. Trigger:** **Device Events → Notification → Notification Received**
+- **Select Application(s):** tick only your payment and bank apps, e.g. GPay, PhonePe, Paytm, CRED, Samsung Wallet, your bank apps (Kotak Bank, BOI Mobile).
+- **Text content:** leave on **Any**. TraFin decides what is a payment; promotions are only logged.
+
+**4. Action:** **HTTP Request**, method **POST**, URL = the same web app URL.
+
+On the **Query Params** tab add these five parameters. Type the name; for the value use the `...` magic-text button:
+
+| Parameter name | Value (magic text to pick) | Inserted as |
+|----------------|----------------------------|-------------|
+| `source` | *(type the word)* `notification` | `notification` |
+| `app` | Notification app name | `{not_app_name}` |
+| `title` | Notification title | `{not_title}` |
+| `message` | Notification text | `{notification}` |
+| `big` | Notification big text | `{not_text_big}` |
+
+On the **Content Body** tab: content type `application/json`, body:
+
+```json
+{"secret":"YOUR_WEBHOOK_SECRET_FROM_STEP_6"}
+```
+
+Query parameters are used for the notification text because it can contain quotes and line breaks, which would break a hand-written JSON body.
+
+**5. Save and enable** the macro.
+
+**What happens to each notification**
+
+| Notification | Result |
+|--------------|--------|
+| A payment the bank SMS also reports | One row only. Whichever arrives first creates the row; the SMS then replaces it with its richer details (merchant, account). |
+| A payment with no SMS | A row is created from the notification, with `via <App>` in the **Labels** column. |
+| Promotions, reminders, bill-due alerts | Not saved. |
+| Everything forwarded | Listed in the **`Notification_Log`** tab with the decision (`saved`, `duplicate`, `merged`, `ignored`). Use it to see what your apps send. |
+
+Examples that are recognised: `NAME paid you ₹3,000.00` (GPay), `₹2,000 received from NAME` / `₹440 sent to NAME` / `₹349 paid successfully … credit card XX1234` (Kotak app), `NAME sent you ₹2,000.00 … Bank of India account has been successfully credited` (CRED), `Recharge of Delhi Metro Smart Card … for Rs. 200 was successful` (Paytm).
+
+> **Note:** UPI apps usually show a success screen, not a notification, for payments **you** make inside the app. Those are covered by the bank SMS or the bank app's notification.
 
 ---
 
@@ -397,11 +445,30 @@ In the spreadsheet, refresh the page. Menu **TraFin**:
 
 | Menu item | What it does |
 |-----------|----------------|
-| Update Dashboard | Rebuilds `Dashboard` sheet |
+| Update Dashboard | Rebuilds the `Dashboard` tab: month totals, budget, recurring, balances, credit cards with **Next Bill** / **Pay By** dates |
 | Format Current Sheet | Colors debit/credit rows |
-| Sync Dropdowns & Balances | Refreshes lists after bulk edits |
-| Refresh Account Balances | Updates SUMIFS formulas |
+| Sync Dropdowns & Balances | Rebuilds the Category and Bank dropdowns and balance formulas. Run it if a Bank cell shows "invalid" after you rename an account or card |
+| Refresh Account Balances / Refresh CC Balances | Rewrites the balance formulas over all monthly tabs |
+| Clean Up Transactions | Re-checks every row against the current rules: promo/reminder/duplicate rows are **moved** to `Removed_SMS`; Unknown entities, Misc categories and Other / old-card banks are filled in. Rows you typed by hand are not touched |
+| Reconcile Balances | Asks for the real balance of each account and card and adjusts the *Initial Balance* so the sheet matches. Run it whenever the sheet and your bank app disagree |
+| Reset Recurring (New Month) | Marks recurring items unpaid |
 | Re-run Initialization | Safe repair of sheet structure |
+
+### Keeping balances exact
+
+Banks skip some alerts, so no SMS/notification tracker is 100% complete. TraFin gives you two tools:
+
+- **Balance Check column** (`Accounts`, `Accounts_CC`): whenever an SMS states your balance (`Avl Bal …`) or card limit (`Avl limit …`), TraFin compares it to the sheet and writes `✓ Matches bank …` or `⚠ … difference …` with the date. A ⚠ tells you the day something went missing.
+- **Reconcile Balances**: enter the real figures from your bank app; the sheet is corrected in seconds.
+
+### Tabs TraFin creates
+
+| Tab | Purpose |
+|-----|---------|
+| `Transactions_MMM_yyyy` | One per month; the transactions |
+| `Unknown_SMS` | SMS that looked financial but had no usable amount/type |
+| `Notification_Log` | Every forwarded app notification and what was done with it |
+| `Removed_SMS` | Rows moved out by **Clean Up Transactions** (copy back if needed) |
 
 ---
 

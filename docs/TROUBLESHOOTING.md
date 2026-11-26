@@ -42,9 +42,13 @@ Or Project Settings → Script properties → add `WEBHOOK_SECRET`.
 
 ## Webhook returns `duplicate`
 
-**Cause:** Same `smsId` sent within **6 hours** (`CacheService`).
+**Cause:** The same SMS (same `smsId` + sender + text) was sent again within 6 hours, or the identical text arrived twice within 15 minutes (banks sometimes deliver one SMS from two sender ids).
 
-**Fix:** Normal for retries. Use unique `smsId` per SMS (timestamp + sender + hash). Wait 6h or change id for testing.
+**Fix:** Normal — nothing to do. Different SMS can no longer block each other, even if the forwarder sends a fixed `smsId`.
+
+### Most transactions missing (old versions)
+
+Before the duplicate check included the SMS text, a non-unique `smsId` (e.g. a typed `[trigger_guid]`) let only about one SMS through every 6 hours. Symptoms: a fraction of your SMS in the sheet, and `[sms_sender]` in the Sender column of `Unknown_SMS`. Deploy the current code and fix the macro body — see [NON_TECHNICAL_SETUP.md](NON_TECHNICAL_SETUP.md#f-json-body-and-secret).
 
 ---
 
@@ -145,6 +149,45 @@ clasp push
 1. **TraFin → Refresh Account Balances** / **Refresh CC Balances**
 2. Confirm **Bank** column matches `Accounts` display names exactly (e.g. `Kotak Savings`)
 3. Edit **Accounts** row to trigger `SettingsSync`
+4. If the numbers still differ from your bank app, run **TraFin → Reconcile Balances** and enter the real figures. Banks do not send an alert for every transaction, so some drift is expected; the **Balance Check** column shows when it started.
+
+---
+
+## Bank cell shows "invalid" / dropdown lists an old card
+
+**Cause:** The dropdown list was built before you renamed an account or changed a card's last 4 digits.
+
+**Fix:** **TraFin → Sync Dropdowns & Balances**, then **TraFin → Clean Up Transactions** to relabel old rows.
+
+---
+
+## Promotions or reminders saved as transactions
+
+**Fix:** Deploy the current code, then **TraFin → Clean Up Transactions**. Junk rows are moved to `Removed_SMS`. If a new kind of promo still gets through, add its distinctive phrase to `hardIgnore` in `src/sms-parser.js` and a case to `scripts/test-parser-samples.js`.
+
+---
+
+## Entity shows "Unknown"
+
+Run **TraFin → Clean Up Transactions** — it re-reads the Raw SMS with the current rules. Rows stay Unknown only when the SMS itself has no name. UPI ids that are just a phone number are kept in full (e.g. `9876543210@axl`) so you can map them in `Settings_Mapping`.
+
+---
+
+## A payment has no row at all
+
+1. Check the phone's Messages app: did a bank SMS arrive? If not, the bank did not send one.
+2. Check `Notification_Log`: did an app notification arrive, and what was the result?
+3. If neither exists, add the row by hand and/or run **Reconcile Balances**.
+
+---
+
+## Notification macro does nothing
+
+| Check | Fix |
+|-------|-----|
+| `Notification_Log` tab never appears | MacroDroid lacks **Notification access**, or the macro is disabled |
+| Rows say `ignored: not a payment` for a real payment | The wording is not recognised yet — copy the Title/Text from `Notification_Log` into an issue or extend `Parser.parseNotification` |
+| `unauthorized` in MacroDroid's log | Body must be `{"secret":"..."}` with the correct secret |
 
 ---
 
@@ -152,7 +195,7 @@ clasp push
 
 **Cause:** Forwarder retries with new ids.
 
-**Mitigation:** Stable `smsId` from provider; future: content-hash dedup.
+**Mitigation:** Identical SMS text within 15 minutes is skipped automatically. Older duplicates: **TraFin → Clean Up Transactions**.
 
 ---
 
@@ -232,7 +275,7 @@ See [Webhook returns `unauthorized`](#webhook-returns-unauthorized) above. Most 
 
 ### Duplicate `smsId` during testing
 
-MacroDroid test fires may reuse the same `{sms_date}`. Add a random suffix for tests or wait 6 hours. See [Webhook returns `duplicate`](#webhook-returns-duplicate).
+MacroDroid's **Test** button sends the variables unfilled, so repeated tests carry identical text and are treated as duplicates. Test with a real SMS, or with curl using different message text. See [Webhook returns `duplicate`](#webhook-returns-duplicate).
 
 ---
 

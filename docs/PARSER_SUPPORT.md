@@ -97,7 +97,21 @@ Patterns (normalized text):
 
 ## Ignored SMS (not stored)
 
-Hardcoded phrases include: OTP, reward points, loan offers, minimum due, KYC, cashback offers, available credit limit, etc.
+An SMS is stored only if it (1) is not ignored, (2) has an amount and (3) has a clear debit/credit meaning.
+
+Ignored (see `Parser.shouldIgnoreSms`):
+
+| Kind | Examples of trigger phrases |
+|------|------------------------------|
+| Promotional sender | sender id ending `-P` (e.g. `JD-KOTAKB-P`) |
+| Marketing | `T&C`, `offer`, `cashback`, `apply now`, `earn … pts`, `recharge now`, `voucher` |
+| Not happened / failed | `will be debited`, `declined`, `could not be approved`, `unsuccessful`, `initiated a refund` |
+| Set-up notices | `mandate`, `auto pay activated`, `your request`, `access request` |
+| Reminders / statements | `is due on`, `min due`, `total due`, `statement for`, `ignore if paid` |
+| Security | `otp`, `one time password`, `kyc` |
+| Investment confirmations | `folio` (the bank debit SMS is the real record) |
+
+Explicitly **kept**: card bill payments (`Payment of INR … is credited to your … Credit Card … Available Credit limit …`), salary/NEFT credits (`has been transferred to your account`), card refunds, debit-card spends, auto-pay debits (`debited via … Card`), UPI reversals, bank charges.
 
 **Settings sheet** `IGNORE_KEYWORDS` exists in `Config.getIgnoreKeywords` but is **not yet wired** into `Parser.shouldIgnoreSms`—planned improvement.
 
@@ -191,3 +205,29 @@ Check `parsed` object in response.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — parser module
 - [CONTRIBUTING.md](CONTRIBUTING.md) — contribution rules
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — ignored / low confidence
+
+---
+
+## App notifications
+
+`Parser.parseNotification(app, title, text)` handles notifications forwarded by the second MacroDroid macro. It is stricter than the SMS parser: an amount **and** an explicit money-moved phrase are required.
+
+| App | Example | Parsed as |
+|-----|---------|-----------|
+| GPay | `NAME paid you ₹3,000.00` | Credit, entity = payer |
+| Kotak Bank | `₹2,000 received from NAME` · `Amount credited to XX4321` | Credit, bank = Kotak |
+| Kotak Bank | `₹440 sent to NAME` · `Amount debited from XX4321` | Debit, bank = Kotak |
+| Kotak Bank | `₹349 paid successfully` · `Amount spent from credit card XX1234` | Debit, bank = `Kotak_CC_1234`, entity `Card Spend` until the SMS supplies the merchant |
+| CRED | `NAME sent you ₹2,000.00` · `Bank of India account has been successfully credited` | Credit, bank = BOI |
+| CRED | `payment of ₹10,336.76 on your Kotak Mahindra Bank credit card XXXX-1234 has been processed` | `CC_Payment` |
+| Paytm | `Recharge of Delhi Metro Smart Card … for Rs. 200 was successful` | Debit, entity `Delhi Metro Smart Card` |
+
+Ignored: anything matching the SMS ignore list, plus loan/EMI offers, reminders, money requests, failed/pending payments, rewards.
+
+### One payment, several reports (`Pairing`)
+
+The SMS, the bank app and the UPI app can all report the same payment. Reports with the same **type + amount** within **15 minutes** share one row; each source can join a row only once, so two real payments of the same amount still give two rows. The best source wins the row: SMS > notification that knows the account > other notification.
+
+## Bank-stated balances
+
+`Parser.extractStatedBalance` reads `Avl Bal …` (account) and `Avl limit …` / `Available Credit limit is …` (card). `BalanceCheck` compares it with the sheet after the row is saved and writes the result to the **Balance Check** column.

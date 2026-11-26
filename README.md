@@ -13,7 +13,12 @@ When your phone receives an Indian bank transaction SMS, **[MacroDroid](https://
 ## Features
 
 - **SMS → Sheet pipeline** — Webhook receives SMS from Android, parses, stores
-- **Indian bank parser** — UPI, debit/credit, credit card spend, CC bill payments, major banks
+- **App notifications too** — optional second macro forwards GPay / PhonePe / Paytm / CRED / bank-app notifications, catching payments that have no SMS; SMS and notifications for the same payment are merged into one row
+- **Indian bank parser** — UPI, debit/credit, credit and debit card spends, CC bill payments, refunds, salary credits, major banks
+- **Only genuine transactions** — promotions, reminders, failed and "will be debited" notices are ignored
+- **Balance check & reconcile** — bank-stated balances are compared with the sheet automatically; one menu action corrects balances
+- **Credit card dates** — statement day and due day per card, with a countdown on the Dashboard
+- **Clean-up tool** — re-applies current rules to existing rows (junk out, Unknown entities filled in)
 - **Smart categories** — Keyword mapping and time/amount rules from settings sheets
 - **Monthly transaction tabs** — `Transactions_MMM_yyyy` with summary rows
 - **Accounts & credit cards** — Balance formulas driven by transaction data
@@ -43,9 +48,11 @@ _Add screenshots to `docs/images/` and replace paths when available._
 ```
 MacroDroid (Android)  →  POST (JSON + secret)  →  doPost (entrypoints.js)
                                               →  Webhook.handle
-                                              →  Parser.parseSms
+                                              →  Parser.parseSms / parseNotification
                                               →  Categories.getSmartCategory
+                                              →  Pairing.claim (merge SMS + notification)
                                               →  Transactions.save → Google Sheet
+                                              →  BalanceCheck.afterSms
 ```
 
 All implementation code lives in `src/` as **namespace objects** (`Parser`, `Transactions`, `Sheet`, …). Global trigger names exist only in `src/entrypoints.js`.
@@ -65,8 +72,9 @@ After setup:
 
 1. Open the spreadsheet → **TraFin** menu → **Re-run Initialization**
 2. Set accounts in **Accounts** / **Accounts_CC**
-3. Install [MacroDroid](https://play.google.com/store/apps/details?id=com.arlosoft.macrodroid) and point it at your webhook URL + secret
-4. Receive a test bank SMS (or run a MacroDroid test)
+3. Install [MacroDroid](https://play.google.com/store/apps/details?id=com.arlosoft.macrodroid) and create the SMS macro (and, recommended, the notifications macro) pointing at your webhook URL + secret
+4. Receive a real bank SMS and check the row appears
+5. Now and then: **TraFin → Reconcile Balances** with the figures from your bank app
 
 ---
 
@@ -105,7 +113,12 @@ trafin/
 │   ├── backup.js        # Backup & migration
 │   ├── data-guard.js    # Header repair
 │   ├── dashboard.js     # Dashboard builder
-│   └── logging.js       # Unknown SMS log
+│   ├── logging.js       # Unknown SMS log
+│   ├── pairing.js       # Merge SMS + notification reports of one payment
+│   ├── balance-check.js # Compare bank-stated balance with the sheet
+│   └── cleanup.js       # "Clean Up Transactions" menu action
+├── scripts/
+│   └── test-parser-samples.js  # Parser regression test (npm run test:parser)
 └── docs/                # Documentation
 ```
 

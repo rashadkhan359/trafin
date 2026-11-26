@@ -50,6 +50,9 @@ flowchart LR
 | `data-guard.js` | `DataGuard` — header verification |
 | `dashboard.js` | `Dashboard` — dashboard builder |
 | `logging.js` | `Logging` — `Unknown_SMS` sheet |
+| `pairing.js` | `Pairing` — merges SMS + app-notification reports of the same payment into one row |
+| `balance-check.js` | `BalanceCheck` — compares bank-stated balance/limit in an SMS with the sheet |
+| `cleanup.js` | `Cleanup` — menu action: move junk/duplicate rows to `Removed_SMS`, refill Unknown/Misc/Other |
 
 Root `Code.js` is a legacy stub. Active code is under `src/`.
 
@@ -81,16 +84,23 @@ All implementation stays in namespaces. **Never** put business logic in `entrypo
 `Webhook.handle(e)`:
 
 1. Acquire script lock (`LockService`, 30s)
-2. Parse JSON body
+2. Parse JSON body and merge URL query parameters (body wins)
 3. `Security.validateWebhookSecret` — fail closed
-4. `Transactions.isDuplicate(smsId)` — cache 6 hours
-5. `Parser.parseSms(rawSms, sender)`
-6. Reject: ignored, low confidence, missing amount/type
-7. `Main.resolveAccountDisplayName` — map parser bank id → sheet display name
-8. `Categories.getSmartCategory` — rules from settings sheets
-9. `Transactions.save` — `TxSchema.toRow` + `appendRow` + dropdown ensure
-10. `Webhook.checkRecurringMatch`
-11. JSON response
+4. If `source=notification` → `Webhook.handleNotification` (below)
+5. `Transactions.isDuplicate(smsId|sender|hash(text))` — cache 6 hours. The text hash makes a non-unique `smsId` harmless
+6. `Parser.parseSms(rawSms, sender)`
+7. Reject: ignored, missing amount/type (logged to `Unknown_SMS`)
+8. `Transactions.isDuplicateContent` — identical text within 15 min (double delivery)
+9. `Main.resolveAccountDisplayName` — parser bank id → sheet display name (single-card fallback for replaced cards)
+10. `Categories.getSmartCategory` — rules from settings sheets
+11. `Pairing.claim` — if an app notification already recorded this payment, overwrite that row; otherwise `Transactions.save`
+12. `BalanceCheck.afterSms` — compare `Avl Bal` / `Avl limit` with the sheet
+13. `Webhook.checkRecurringMatch`
+14. JSON response
+
+`Webhook.handleNotification`: `Parser.parseNotification` → resolve account + category → `Pairing.claim` → save / merge / skip → every notification appended to `Notification_Log` with the decision.
+
+Low-confidence SMS rows are still written (highlighted orange) and copied to `Unknown_SMS`.
 
 ---
 
