@@ -239,6 +239,7 @@ const Main = {
             const menu = SpreadsheetApp.getUi()
                 .createMenu("TraFin")
                 .addItem("Update Dashboard",             "updateGlobalDashboard")
+                .addItem("Update Charts",                "updateCharts")
                 .addItem("Format Current Sheet",         "applyFormatting")
                 .addItem("Sync Dropdowns & Balances",    "syncSettingsAndDropdowns")
                 .addItem("Refresh Account Balances",     "refreshAccountBalances")

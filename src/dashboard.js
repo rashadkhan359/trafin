@@ -173,6 +173,12 @@ const Dashboard = {
         dash.setColumnWidth(4, 130);
         dash.setColumnWidth(5, 200);
 
+        try {
+            ChartsTab.update(true);
+        } catch (err) {
+            Logger.log("Charts update failed: " + err);
+        }
+
         Main.alert("✅ Dashboard updated!");
     },
 

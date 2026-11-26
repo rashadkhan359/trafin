@@ -56,3 +56,7 @@ function cleanUpTransactions() {
 function reconcileBalances() {
   return Main.reconcileBalances();
 }
+
+function updateCharts() {
+  return ChartsTab.update(false);
+}

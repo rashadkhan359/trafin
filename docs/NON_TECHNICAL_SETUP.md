@@ -446,6 +446,7 @@ In the spreadsheet, refresh the page. Menu **TraFin**:
 | Menu item | What it does |
 |-----------|----------------|
 | Update Dashboard | Rebuilds the `Dashboard` tab: month totals, budget, recurring, balances, credit cards with **Next Bill** / **Pay By** dates |
+| Update Charts | Rebuilds the `Charts` tab: spent vs income by month, this month's spending by category, this month's top payees. Transfers and card bill payments are excluded. Also runs after Update Dashboard |
 | Format Current Sheet | Colors debit/credit rows |
 | Sync Dropdowns & Balances | Rebuilds the Category and Bank dropdowns and balance formulas. Run it if a Bank cell shows "invalid" after you rename an account or card |
 | Refresh Account Balances / Refresh CC Balances | Rewrites the balance formulas over all monthly tabs |
