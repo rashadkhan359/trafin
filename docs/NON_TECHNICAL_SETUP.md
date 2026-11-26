@@ -454,6 +454,15 @@ In the spreadsheet, refresh the page. Menu **TraFin**:
 | Reset Recurring (New Month) | Marks recurring items unpaid |
 | Re-run Initialization | Safe repair of sheet structure |
 
+### What "Total Expenses" and "Total Income" count
+
+Each monthly tab totals **every Debit** and **every Credit** across all your accounts and cards, except rows whose Category is **Transfer** or **CC Payment**:
+
+- Set Category = **Transfer** on money you move between your own accounts, and on money that is not really income or spending (a friend paying you back, cash you pass on for someone).
+- Card purchases count when you make them, so paying the card bill (**CC Payment**) is not counted again.
+
+Large one-off rows (rent, loan instalments, lending money) are real debits and are included; give them their own category so the Budget tab separates them. After changing the formulas in the code, **TraFin → Sync Dropdowns & Balances** rewrites the summary on all month tabs.
+
 ### Keeping balances exact
 
 Banks skip some alerts, so no SMS/notification tracker is 100% complete. TraFin gives you two tools:

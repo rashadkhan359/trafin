@@ -9,17 +9,36 @@ const Sheet = {
     createMonthlySheet(ss, name) {
         const sheet = ss.insertSheet(name);
         sheet.getRange("A1:B1").setValues([["Monthly Summary", "Value"]]).setFontWeight("bold");
-        sheet.getRange("A2:B4").setValues([
-            ["Total Expenses", `=SUMIF(B6:B,"Debit",C6:C)`],
-            ["Total Income", `=SUMIF(B6:B,"Credit",C6:C)`],
-            ["Net Balance", `=B3-B2`]
-        ]);
+        sheet.getRange("A2:B4").setValues(Sheet.monthlySummaryRows());
 
         sheet.getRange(5, 1, 1, TxSchema.HEADERS.length)
             .setValues([TxSchema.HEADERS]).setFontWeight("bold").setBackground("#eeeeee");
         sheet.setFrozenRows(5);
         Sheet.applyTransactionDropdowns(ss, sheet, 6, 1000);
         return sheet;
+    },
+
+    /************************************************************
+     * MONTHLY SUMMARY (rows 2-4)
+     * Money moved between your own accounts is not spending or income,
+     * so rows categorised "Transfer" or "CC Payment" are left out.
+     * (Card purchases are already counted when they happen; paying the
+     * card bill from savings must not count them a second time.)
+     ************************************************************/
+    monthlySummaryRows() {
+        return [
+            ["Total Expenses",
+                `=SUMIFS(C6:C,B6:B,"Debit",E6:E,"<>Transfer",E6:E,"<>CC Payment")`],
+            ["Total Income", `=SUMIFS(C6:C,B6:B,"Credit",E6:E,"<>Transfer")`],
+            ["Net Balance", `=B3-B2`]
+        ];
+    },
+
+    /** Rewrite the summary formulas on every existing monthly sheet. */
+    refreshMonthlySummaries(ss) {
+        ss.getSheets()
+            .filter(s => s.getName().startsWith("Transactions_"))
+            .forEach(s => s.getRange("A2:B4").setValues(Sheet.monthlySummaryRows()));
     },
 
     /************************************************************

@@ -42,6 +42,7 @@ const SettingsSync = {
      * Full sync — menus, init, manual repair
      ************************************************************/
     refreshAll(ss) {
+        Sheet.refreshMonthlySummaries(ss);
         Sheet.reapplyAllDropdowns(ss);
         Main.refreshAccountBalances();
         Main.refreshCCBalances();

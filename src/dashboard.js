@@ -131,6 +131,8 @@ const Dashboard = {
                     if (!cardName) return;
                     const bill = Dashboard.nextDayOfMonth(today, stmtDay);
                     const due = Dashboard.nextDayOfMonth(today, dueDay);
+                    // plain text, otherwise Sheets turns "5 Dec" into a date number
+                    dash.getRange(row, 4, 1, 2).setNumberFormat("@");
                     dash.getRange(row, 1, 1, 5).setValues([[
                         `${cardName} (...${last4})`, outstanding, available,
                         bill ? bill.label : "set Statement Day",
